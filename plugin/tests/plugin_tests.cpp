@@ -41,6 +41,7 @@ static void snapshot (juce::Component& c, const juce::File& dir, const juce::Str
 
 int main (int argc, char** argv)
 {
+    std::setvbuf (stdout, nullptr, _IONBF, 0);  // keep progress visible in CI logs even if the process crashes
     juce::ScopedJuceInitialiser_GUI gui;
     juce::File shots = argc > 1 ? juce::File (juce::String (argv[1])) : juce::File();
     if (shots != juce::File()) shots.createDirectory();

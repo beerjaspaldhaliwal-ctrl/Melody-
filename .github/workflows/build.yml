@@ -41,7 +41,7 @@ jobs:
             pluginval: pluginval_Linux.zip
           - name: Windows
             os: windows-latest
-            generator: Visual Studio 17 2022
+            generator: ""  # let CMake pick the newest installed Visual Studio
             pluginval: pluginval_Windows.zip
           - name: macOS
             os: macos-14
@@ -66,7 +66,9 @@ jobs:
         run: |
           extra=""
           if [ "$RUNNER_OS" == "macOS" ]; then extra="-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"; fi
-          cmake -S plugin -B build -G "${{ matrix.generator }}" -DCMAKE_BUILD_TYPE=Release $extra
+          gen=()
+          if [ -n "${{ matrix.generator }}" ]; then gen=(-G "${{ matrix.generator }}"); fi
+          cmake -S plugin -B build "${gen[@]}" -DCMAKE_BUILD_TYPE=Release $extra
 
       - name: Build
         run: cmake --build build --config Release --parallel 4 --target Melodyverse_All core_tests plugin_tests
