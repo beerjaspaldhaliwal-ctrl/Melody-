@@ -2,6 +2,8 @@
 
 **Listen to any track → get its melody and chords back as MIDI + audio → write brand-new melodies in the musical language of Hollywood, Spain, Punjab, Bollywood, Latin America, the UK/US charts and more.**
 
+Available as a **VST3 / AU / standalone plugin** ([below](#the-vst3-plugin)) and as a Python package + command-line tool.
+
 ```
 melodyverse transcribe song.mp3          # the song's melody & chords → .mid + .wav
 melodyverse match song.mp3 -s punjabi    # NEW bhangra melodies over the song's own chords
@@ -91,11 +93,55 @@ On the synthetic test songs in `tests/` (known ground truth), it recovers tempo 
 - The chord vocabulary is maj, min, 7, m7, dim and sus4. Extended jazz harmony is reported as its core triad or seventh chord.
 - Fixed 4/4 grid and a single tempo per track.
 
-## Use it in your DAW
+## The VST3 plugin
 
-Every result is a standard General-MIDI file with a tempo, a key signature and chord-name markers. Drag `*_melody.mid` / `*_chords.mid` onto your own instruments. Transcriptions are aligned to the start of the original audio.
+`plugin/` contains **Melodyverse as a VST3 plugin** (plus an AU on macOS and a standalone app). It is a native C++ port of this engine, so no Python is needed inside your DAW.
 
-**Roadmap to a real plugin (VST3/AU):** the engine is plain Python with no global state, built so it can sit behind a [JUCE](https://juce.com) front-end. That front-end would capture audio from a track (or accept a dropped file), call `analyze` / `match`, and drag the generated MIDI clips back into the host.
+![Melodyverse plugin](docs/plugin.png)
+
+- **Compose:** pick one of the 30 styles, a key/mode, bar count or your own progression, then hit **GENERATE**. Melody, chords, bass and drums play **in sync with your DAW transport**, at the project tempo, looping.
+- **Listen:** drop a song on the plugin (WAV, AIFF, FLAC, OGG, MP3), or press **Capture input** and play audio into it. That can be a sidechain or input routing in your DAW, or your mic in the standalone app, so you can even hum a tune. It detects key, mode, tempo, chords and melody, names the famous progression it uses, and suggests the closest styles.
+  - **TRANSCRIBE IT:** the song's own melody, chords and bass become a playable, draggable MIDI arrangement.
+  - **NEW MELODY OVER IT:** an original part in the selected style, written over the song's chords, key and tempo.
+- **Get the notes out:** drag any part (or the full arrangement) from its **drag MIDI** pill straight into your timeline. You can also enable **MIDI out** (melody ch.1, chords ch.2, bass ch.3, drums ch.10) to drive your own instruments, or use **Save MIDI / Save WAV**.
+- Per-part on/off, volume and instrument (piano, strings, brass, flute, bansuri, sitar, tumbi, harmonium, nylon guitar, oud, 808, supersaw…). Everything is saved with your project.
+
+### Download
+
+Every push builds the plugin for **Windows, macOS (Universal) and Linux** on GitHub Actions. The builds are validated with [pluginval](https://github.com/Tracktion/pluginval) at strictness 10 and run the full test suites. Grab the zip from the workflow run's *Artifacts*. When a version tag (`v*`) is pushed, the zips are attached to the GitHub Release.
+
+| OS | Copy `Melodyverse.vst3` to |
+|---|---|
+| Windows | `C:\Program Files\Common Files\VST3\` |
+| macOS | `~/Library/Audio/Plug-Ins/VST3/` (and `Melodyverse.component` to `~/Library/Audio/Plug-Ins/Components/` for Logic/GarageBand) |
+| Linux | `~/.vst3/` |
+
+The macOS build is ad-hoc signed, not notarized. If macOS blocks it, run `xattr -cr ~/Library/Audio/Plug-Ins/VST3/Melodyverse.vst3`.
+
+### Using it in a DAW
+
+1. Insert **Melodyverse** as an **instrument** on an instrument/MIDI track and press play: you hear the pattern in sync.
+2. To have it listen to another track, route that track into Melodyverse's input (sidechain or input routing; "Monitor in" passes it through), arm **Capture input**, play the section, then press **Stop**. It uses your project tempo for the analysis. Dropping an audio file onto the plugin works in every DAW.
+3. Drag the parts you like into the timeline. Transcriptions are aligned to the start of the song; set the project tempo to the BPM shown in the plugin.
+
+MIDI output from VST3 instruments is supported in Reaper, Cubase, Bitwig and Studio One, among others. In DAWs that don't route plugin MIDI out (e.g. Ableton Live), use drag-and-drop.
+
+### Build from source
+
+```bash
+cmake -S plugin -B build -DCMAKE_BUILD_TYPE=Release        # downloads JUCE 8.0.4 (or pass -DJUCE_DIR=/path/to/JUCE)
+cmake --build build --config Release --target Melodyverse_All core_tests plugin_tests
+ctest --test-dir build -C Release                          # core engine tests
+build/plugin_tests_artefacts/Release/plugin_tests          # plugin integration tests (use xvfb-run on headless Linux)
+```
+
+Linux needs: `libasound2-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxext-dev libfreetype-dev libfontconfig1-dev libgl1-mesa-dev`.
+
+**Layout:** `plugin/core/` is the dependency-free C++17 engine (theory, styles, generator, analyser, real-time synth, MIDI writer), unit-tested on its own. `plugin/source/` is the JUCE processor and UI. The style library lives in Python and is exported to `plugin/core/StylesData.inc` with `python tools/export_styles_cpp.py`; a test fails if the two drift apart.
+
+## Use the CLI's output in your DAW
+
+Every result is a standard General-MIDI file with tempo, key signature and chord-name markers. Drag `*_melody.mid` / `*_chords.mid` onto your own instruments. Transcriptions are aligned to the start of the original audio.
 
 ## Python API
 
@@ -118,5 +164,5 @@ write_midi(idea, "bhangra.mid"); write_wav("bhangra.wav", render(idea))
 
 ```bash
 pip install -e ".[dev]"
-pytest            # 59 tests, ~10 s: theory, every style, MIDI/audio I/O, end-to-end listening
+pytest            # 60 tests, ~15 s: theory, every style, MIDI/audio I/O, end-to-end listening
 ```

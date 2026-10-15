@@ -1,0 +1,126 @@
+name: Build & test
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write  # attach plugin zips to GitHub Releases on version tags
+
+jobs:
+  python:
+    name: Python engine
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: |
+          sudo apt-get update && sudo apt-get install -y libsndfile1 ffmpeg
+          pip install -e ".[dev]"
+      - name: Style data shared with the plugin is up to date
+        run: python tools/export_styles_cpp.py --check
+      - name: Tests
+        run: pytest -q
+
+  plugin:
+    name: Plugin (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-22.04
+            generator: Ninja
+            pluginval: pluginval_Linux.zip
+          - name: Windows
+            os: windows-latest
+            generator: Visual Studio 17 2022
+            pluginval: pluginval_Windows.zip
+          - name: macOS
+            os: macos-14
+            generator: Ninja
+            pluginval: pluginval_macOS.zip
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libasound2-dev libx11-dev libxrandr-dev libxinerama-dev \
+            libxcursor-dev libxext-dev libxcomposite-dev libfreetype6-dev libfontconfig1-dev \
+            libgl1-mesa-dev mesa-common-dev libcurl4-openssl-dev xvfb
+      - name: macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Configure
+        shell: bash
+        run: |
+          extra=""
+          if [ "$RUNNER_OS" == "macOS" ]; then extra="-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"; fi
+          cmake -S plugin -B build -G "${{ matrix.generator }}" -DCMAKE_BUILD_TYPE=Release $extra
+
+      - name: Build
+        run: cmake --build build --config Release --parallel 4 --target Melodyverse_All core_tests plugin_tests
+
+      - name: Core tests
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Plugin integration tests
+        shell: bash
+        run: |
+          bin=$(find build/plugin_tests_artefacts -type f \( -name plugin_tests -o -name plugin_tests.exe -o -name MelodyversePluginTests -o -name MelodyversePluginTests.exe \) | head -1)
+          if [ "$RUNNER_OS" == "Linux" ]; then xvfb-run -a "$bin" screenshots; else "$bin" screenshots; fi
+
+      - name: Validate VST3 with pluginval (strictness 10)
+        shell: bash
+        run: |
+          curl -sSL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/v1.0.4/${{ matrix.pluginval }}"
+          unzip -q pluginval.zip -d pluginval
+          vst3="build/Melodyverse_artefacts/Release/VST3/Melodyverse.vst3"
+          case "$RUNNER_OS" in
+            Linux)   xvfb-run -a ./pluginval/pluginval --strictness-level 10 --validate-in-process --validate "$vst3" ;;
+            Windows) ./pluginval/pluginval.exe --strictness-level 10 --validate-in-process --validate "$vst3" ;;
+            macOS)   ./pluginval/pluginval.app/Contents/MacOS/pluginval --strictness-level 10 --validate-in-process --validate "$vst3" ;;
+          esac
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          cd build/Melodyverse_artefacts/Release
+          name="Melodyverse-${{ matrix.name }}"
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            7z a "../../../dist/$name.zip" VST3/Melodyverse.vst3 Standalone/Melodyverse.exe
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            codesign --force --deep -s - VST3/Melodyverse.vst3 AU/Melodyverse.component Standalone/Melodyverse.app || true
+            zip -qry "../../../dist/$name.zip" VST3/Melodyverse.vst3 AU/Melodyverse.component Standalone/Melodyverse.app
+          else
+            zip -qry "../../../dist/$name.zip" VST3/Melodyverse.vst3 Standalone/Melodyverse
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Melodyverse-${{ matrix.name }}
+          path: dist/*.zip
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots-${{ matrix.name }}
+          path: screenshots/*.png
+          if-no-files-found: ignore
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
