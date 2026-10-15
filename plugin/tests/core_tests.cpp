@@ -4,9 +4,11 @@
 #include "../core/MidiFile.h"
 #include "../core/Styles.h"
 #include "../core/Synth.h"
+#include "../core/Vocal.h"
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <set>
 #include <string>
@@ -248,6 +250,80 @@ int main()
         m.chords = m.bass = m.drums = false;
         auto matched = generate (m);
         CHECK (matched.track ("Melody") && matched.track ("Melody")->notes.size() > 10);
+    });
+
+    test ("vocals: deep analysis + chord suggestions + arrangement", [] {
+        // a synthetic Punjabi-sad "singer": bansuri voice with vibrato and meend glides, Sa = A, Kafi thaat
+        GenerateOptions o;
+        o.style = "punjabi_sad";
+        o.key = Key::parse ("A kafi");
+        o.bpm = 80;
+        o.bars = 8;
+        o.seed = 11;
+        o.progression = "i iv bVII i";
+        o.chords = o.bass = o.drums = false;
+        auto song = generate (o);
+        auto* mel = song.track ("Melody");
+        for (auto& n : mel->notes)  // breathe at the end of every two-bar phrase
+            if (std::fmod (n.end() + 1e-6, 8.0) < 0.01 && n.duration > 1.0) n.duration -= 0.75;
+        mel->instrument = "bansuri";
+        int bends = 0;
+        for (auto& n : mel->notes) bends += n.bendFrom != 0;
+        std::vector<float> l, r;
+        renderScore (song, 44100, l, r, 1.0, 1, 0.0f);  // a dry vocal
+        std::vector<float> mono (l.size());
+        for (size_t i = 0; i < l.size(); ++i) mono[i] = 0.5f * (l[i] + r[i]);
+        auto R = analyzeVocal (mono.data(), mono.size(), 44100);
+        for (auto& line : R.insights) std::printf ("    %s\n", line.c_str());
+        if (std::getenv ("MV_DEBUG"))
+        {
+            for (size_t i = 0; i < mel->notes.size() && i < 40; ++i)
+                std::printf ("      truth %.2f %s %.2fb%s\n", mel->notes[i].start * 0.75, midiToName (mel->notes[i].pitch).c_str(), mel->notes[i].duration, mel->notes[i].bendFrom ? " bend" : "");
+            for (size_t i = 0; i < R.notes.size() && i < 50; ++i)
+                std::printf ("      heard %.2f-%.2f %s\n", R.notes[i].start, R.notes[i].end, midiToName (R.notes[i].pitch).c_str());
+        }
+        CHECK (R.key.tonic == 9);
+        CHECK (R.thaat == "kafi" || R.thaat == "asavari");
+        CHECK (std::abs (R.bpm - 80) < 4 || std::abs (R.bpm - 160) < 8);
+        CHECK (! R.notes.empty());
+        int hit = 0;
+        for (auto& n : mel->notes)
+        {
+            if (n.duration < 0.5) continue;
+            double t = (n.start + n.duration * 0.6) * 60.0 / song.bpm;  // past any glide into the note
+            bool ok = false;
+            for (auto& g : R.notes) if (g.start <= t && t <= g.end && g.pitch == n.pitch) { ok = true; break; }
+            hit += ok;
+            if (! ok && std::getenv ("MV_DEBUG")) std::printf ("      MISS %.2fs %s\n", t, midiToName (n.pitch).c_str());
+        }
+        int longNotes = 0;
+        for (auto& n : mel->notes) longNotes += n.duration >= 0.5;
+        std::printf ("    held-note pitch accuracy %d/%d, %d meend sung, %d detected\n", hit, longNotes, bends, R.count ("meend"));
+        CHECK (hit >= 0.8 * longNotes);
+        CHECK (R.vibratoShare > 0.2);
+        if (bends > 0) CHECK (R.count ("meend") > 0);
+        CHECK (R.lowest >= 55 && R.highest <= 84);
+        auto opts = suggestProgressions (R, 5);
+        CHECK (opts.size() == 5);
+        for (auto& op : opts) std::printf ("    %3.0f%%  %-30s %s  [%s]\n", op.fit * 100, op.name.c_str(), op.roman.c_str(), op.style.c_str());
+        CHECK (! opts.empty() && opts[0].fit > 0.6);
+        for (size_t i = 1; i < opts.size(); ++i) CHECK (opts[i - 1].fit >= opts[i].fit);
+        auto arr = arrangeForVocal (R, opts[0], VocalMelodyIdea::Answers, 3);
+        CHECK (arr.track ("Vocal") && arr.track ("Vocal")->notes.size() == R.notes.size());
+        CHECK (arr.track ("Chords") && arr.track ("Bass") && arr.track ("Melody"));
+        // answer phrases must not sit on top of the singing
+        int overlaps = 0;
+        for (auto& a : arr.track ("Melody")->notes)
+            for (auto& v : arr.track ("Vocal")->notes) overlaps += a.start < v.end() && a.end() > v.start;
+        CHECK (overlaps == 0);
+        auto harm = arrangeForVocal (R, opts[0], VocalMelodyIdea::HarmonyAbove, 3);
+        CHECK (harm.track ("Melody")->notes.size() == harm.track ("Vocal")->notes.size());
+        auto pcs = R.key.pitchClasses();
+        for (size_t i = 0; i < harm.track ("Melody")->notes.size(); ++i)
+        {
+            int iv = harm.track ("Melody")->notes[i].pitch - harm.track ("Vocal")->notes[i].pitch;
+            CHECK (iv >= 3 && iv <= 5);
+        }
     });
 
     std::printf ("\n%d checks, %d failures\n", checks, failures);

@@ -23,7 +23,8 @@ add_library(melodyverse_core STATIC
     core/Generator.cpp
     core/Analysis.cpp
     core/Synth.cpp
-    core/MidiFile.cpp)
+    core/MidiFile.cpp
+    core/Vocal.cpp)
 target_include_directories(melodyverse_core PUBLIC core)
 if(MSVC)
     target_compile_options(melodyverse_core PRIVATE /utf-8 /W3)

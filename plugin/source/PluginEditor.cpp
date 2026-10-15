@@ -191,6 +191,56 @@ void MidiDragHandle::mouseDrag (const juce::MouseEvent& e)
 }
 
 // ---------------------------------------------------------------------------
+// Progression list
+// ---------------------------------------------------------------------------
+
+void ProgressionList::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool selected)
+{
+    if (row < 0 || row >= (int) options.size()) return;
+    auto& o = options[(size_t) row];
+    auto r = juce::Rectangle<float> (0, 0, (float) w, (float) h).reduced (2.0f, 2.0f);
+    g.setColour (selected ? col::accentA.withAlpha (0.25f) : col::field);
+    g.fillRoundedRectangle (r, 6.0f);
+    if (selected)
+    {
+        g.setColour (col::accentA);
+        g.drawRoundedRectangle (r, 6.0f, 1.2f);
+    }
+    auto inner = r.reduced (8.0f, 4.0f);
+    auto top = inner.removeFromTop (16.0f);
+    // fit meter
+    auto meter = top.removeFromRight (64.0f);
+    g.setColour (col::bg);
+    g.fillRoundedRectangle (meter.withSizeKeepingCentre (64.0f, 6.0f), 3.0f);
+    g.setGradientFill (juce::ColourGradient (col::accentA, meter.getX(), 0, col::accentB, meter.getRight(), 0, false));
+    g.fillRoundedRectangle (meter.withSizeKeepingCentre (64.0f, 6.0f).withWidth (64.0f * (float) o.fit), 3.0f);
+    g.setColour (col::text);
+    g.setFont (font (12.5f, true));
+    g.drawText (juce::String (row + 1) + ".  " + juce::String (o.name), top.withTrimmedRight (6), juce::Justification::centredLeft, true);
+    g.setColour (col::accentB);
+    g.setFont (font (11.5f));
+    g.drawText (juce::String ((int) std::lround (o.fit * 100)) + "% fit   " + juce::String (o.roman), inner.removeFromTop (15.0f), juce::Justification::centredLeft, true);
+    g.setColour (col::dim);
+    g.setFont (font (10.5f));
+    std::string names;
+    std::optional<mv::Chord> last;
+    int shown = 0;
+    for (auto& c : o.chords)
+    {
+        if (! c.chord || (last && *last == *c.chord)) continue;
+        if (++shown > 8) { names += " ..."; break; }
+        names += (names.empty() ? "" : "  ") + c.chord->name (flats);
+        last = c.chord;
+    }
+    g.drawText (juce::String (names) + "   |   " + pretty (o.style), inner, juce::Justification::centredLeft, true);
+}
+
+juce::String ProgressionList::getTooltipForRow (int row)
+{
+    return row >= 0 && row < (int) options.size() ? juce::String (options[(size_t) row].description) : juce::String();
+}
+
+// ---------------------------------------------------------------------------
 // Editor
 // ---------------------------------------------------------------------------
 
@@ -295,6 +345,53 @@ MelodyverseEditor::MelodyverseEditor (MelodyverseProcessor& p) : AudioProcessorE
                                                                           &quantizeLabel, &analysisText, &tempoHint })
         addAndMakeVisible (c);
 
+    // ---- vocals tab ----
+    for (auto* t : { &listenTab, &vocalTabButton })
+    {
+        t->setClickingTogglesState (true);
+        t->setRadioGroupId (7001);
+        addAndMakeVisible (*t);
+    }
+    listenTab.onClick = [this] { showTab (false); };
+    vocalTabButton.onClick = [this] { showTab (true); };
+    vocalTabButton.setTooltip ("Analyse a vocal in depth and get the chord progressions and melodies that fit it");
+    loadVocalButton.setTooltip ("A dry vocal works best: an a cappella, or the vocal stem of your song (WAV, AIFF, FLAC, OGG, MP3)");
+    recordVocalButton.setClickingTogglesState (true);
+    recordVocalButton.getProperties().set ("onColour", (juce::int64) 0xffff4757);
+    recordVocalButton.setTooltip ("Sing into the mic (standalone) or route your vocal track into the plugin, then press Stop");
+    loadVocalButton.onClick = [this] {
+        chooser = std::make_unique<juce::FileChooser> ("Choose a vocal", juce::File(), "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3");
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this] (const juce::FileChooser& fc) {
+            if (fc.getResult().existsAsFile()) proc.loadVocalFile (fc.getResult());
+        });
+    };
+    recordVocalButton.onClick = [this] {
+        proc.setCapturing (recordVocalButton.getToggleState(), MelodyverseProcessor::CaptureTarget::Vocal);
+    };
+    vocalReportText.setMultiLine (true, true);
+    vocalReportText.setReadOnly (true);
+    vocalReportText.setScrollbarsShown (true);
+    vocalReportText.setCaretVisible (false);
+    vocalReportText.setFont (font (12.0f));
+    vocalReportText.setColour (juce::TextEditor::backgroundColourId, col::field);
+    setupLabel (progressionsLabel, "TOP CHORD PROGRESSIONS FOR THIS VOCAL", 10.5f);
+    setupLabel (vocalHint, "", 11.0f, col::accentB);
+    vocalHint.setJustificationType (juce::Justification::topLeft);
+    progressionList.setRowHeight (48);
+    progressionList.setColour (juce::ListBox::backgroundColourId, juce::Colours::transparentBlack);
+    progressionList.setColour (juce::ListBox::outlineColourId, juce::Colours::transparentBlack);
+    progressionModel.onPick = [this] (int row) { proc.applyVocalOption (row); };
+    ideaBox.addItem ("Melody: answer phrases between your lines", 1);
+    ideaBox.addItem ("Melody: harmony a 3rd above the vocal", 2);
+    ideaBox.addItem ("Melody: harmony a 6th below the vocal", 3);
+    ideaBox.onChange = [this] { proc.setVocalIdea (ideaBox.getSelectedId() - 1); };
+    newIdeaButton.getProperties().set ("accent", true);
+    newIdeaButton.setTooltip ("Keep the chords, write a fresh melody / arrangement around the vocal");
+    newIdeaButton.onClick = [this] { proc.newVocalIdea(); };
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &loadVocalButton, &recordVocalButton, &vocalReportText, &progressionsLabel,
+                                                                          &progressionList, &ideaBox, &newIdeaButton, &vocalHint })
+        addChildComponent (c);
+
     // ---- parts ----
     addAndMakeVisible (roll);
     auto instruments = mv::instrumentNames();
@@ -302,7 +399,7 @@ MelodyverseEditor::MelodyverseEditor (MelodyverseProcessor& p) : AudioProcessorE
     {
         auto colour = PianoRoll::partColour (i);
         auto& b = partButtons[(size_t) i];
-        b.setButtonText (mv::partName ((mv::Part) i));
+        b.setButtonText (i == 4 ? "Vocal" : mv::partName ((mv::Part) i));
         b.setClickingTogglesState (true);
         b.getProperties().set ("onColour", (juce::int64) colour.getARGB());
         buttonAttachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.params, juce::String (MelodyverseProcessor::kPartIds[i]) + "_on", b));
@@ -317,9 +414,9 @@ MelodyverseEditor::MelodyverseEditor (MelodyverseProcessor& p) : AudioProcessorE
         addAndMakeVisible (s);
 
         auto& box = instBoxes[(size_t) i];
-        if (i < 3)
+        if (i != 3)
         {
-            box.addItem ("Style sound", 1);
+            box.addItem (i == 4 ? "Guide (bansuri)" : "Style sound", 1);
             for (size_t k = 0; k < instruments.size(); ++k) box.addItem (pretty (instruments[k]), (int) k + 2);
             box.onChange = [this, i, instruments] {
                 int sel = instBoxes[(size_t) i].getSelectedId();
@@ -389,9 +486,11 @@ MelodyverseEditor::MelodyverseEditor (MelodyverseProcessor& p) : AudioProcessorE
     addAndMakeVisible (saveWavButton);
 
     syncUiFromSettings();
+    listenTab.setToggleState (true, juce::dontSendNotification);
+    showTab (proc.getVocalReport().has_value());
     setResizable (true, true);
-    setResizeLimits (980, 620, 1800, 1200);
-    setSize (1120, 680);
+    setResizeLimits (1100, 660, 1900, 1250);
+    setSize (1220, 720);
     refreshFromProcessor();
     startTimerHz (30);
 }
@@ -457,6 +556,41 @@ void MelodyverseEditor::refreshFromProcessor()
                          juce::dontSendNotification);
     seedLabel.setText ("seed " + juce::String (proc.settings.seed), juce::dontSendNotification);
 
+    // vocals
+    {
+        auto vr = proc.getVocalReport();
+        auto opts = proc.getVocalOptions();
+        progressionModel.options = opts;
+        progressionModel.flats = vr && vr->key.prefersFlats();
+        progressionList.updateContent();
+        if (proc.getVocalOptionIndex() >= 0) progressionList.selectRow (proc.getVocalOptionIndex(), true, true);
+        else progressionList.deselectAllRows();
+        progressionList.repaint();
+        ideaBox.setSelectedId (proc.getVocalIdea() + 1, juce::dontSendNotification);
+        newIdeaButton.setEnabled (! opts.empty() && ! proc.isBusy());
+        ideaBox.setEnabled (! opts.empty());
+        juce::String report;
+        if (vr)
+        {
+            report << "VOCAL: " << proc.getVocalLabel() << "\n\n";
+            for (auto& line : vr->insights) report << "- " << line << "\n";
+            vocalHint.setText (opts.empty() ? juce::String() : "Click a progression to hear it under the vocal guide. Bar 1 = "
+                                                                     + juce::String (vr->originSeconds, 2) + " s into your vocal.",
+                               juce::dontSendNotification);
+        }
+        else
+        {
+            report = "Drop a vocal here (or load / record one).\n\n"
+                     "Melodyverse studies it in depth: Sa and thaat, the swaras you use, range and voice type, meend, murki, kan and vibrato, "
+                     "pitch accuracy, phrasing and breaths, the hook, tempo and swing.\n\n"
+                     "Then it ranks the chord progressions that fit your singing best (Punjabi sad, bhangra, Punjabi pop, R&B, Sufi...) "
+                     "and writes answer phrases or harmonies around your voice.\n\n"
+                     "Best results: a dry vocal - a cappella or the isolated vocal stem.";
+            vocalHint.setText ({}, juce::dontSendNotification);
+        }
+        if (vocalReportText.getText() != report) vocalReportText.setText (report, false);
+    }
+
     auto a = proc.getAnalysis();
     transcribeButton.setEnabled (a.has_value() && ! proc.isBusy());
     matchButton.setEnabled (a.has_value() && ! proc.isBusy());
@@ -499,16 +633,12 @@ void MelodyverseEditor::timerCallback()
         refreshFromProcessor();
     }
     roll.setPlayhead (proc.getPlayheadBeat(), proc.isHostPlaying());
-    if (proc.isCapturing())
-    {
-        captureButton.setButtonText ("Stop  (" + juce::String (proc.capturedSeconds(), 1) + " s)");
-        captureButton.setToggleState (true, juce::dontSendNotification);
-    }
-    else
-    {
-        captureButton.setButtonText ("Capture input");
-        captureButton.setToggleState (false, juce::dontSendNotification);
-    }
+    const bool capVocal = proc.isCapturing() && proc.getCaptureTarget() == MelodyverseProcessor::CaptureTarget::Vocal;
+    const bool capSong = proc.isCapturing() && ! capVocal;
+    captureButton.setButtonText (capSong ? "Stop  (" + juce::String (proc.capturedSeconds(), 1) + " s)" : juce::String ("Capture input"));
+    captureButton.setToggleState (capSong, juce::dontSendNotification);
+    recordVocalButton.setButtonText (capVocal ? "Stop  (" + juce::String (proc.capturedSeconds(), 1) + " s)" : juce::String ("Record vocal"));
+    recordVocalButton.setToggleState (capVocal, juce::dontSendNotification);
     juce::String hint;
     if (auto a = proc.getAnalysis())
     {
@@ -519,6 +649,18 @@ void MelodyverseEditor::timerCallback()
     }
     tempoHint.setText (hint, juce::dontSendNotification);
     if (proc.isBusy()) repaint (progressArea);
+}
+
+void MelodyverseEditor::showTab (bool vocals)
+{
+    vocalsTab = vocals;
+    (vocals ? vocalTabButton : listenTab).setToggleState (true, juce::dontSendNotification);
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &loadButton, &captureButton, &transcribeButton, &matchButton, &quantizeBox,
+                                                                          &quantizeLabel, &analysisText, &tempoHint })
+        c->setVisible (! vocals);
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &loadVocalButton, &recordVocalButton, &vocalReportText, &progressionsLabel,
+                                                                          &progressionList, &ideaBox, &newIdeaButton, &vocalHint })
+        c->setVisible (vocals);
 }
 
 bool MelodyverseEditor::isInterestedInFileDrag (const juce::StringArray& files)
@@ -534,7 +676,12 @@ void MelodyverseEditor::filesDropped (const juce::StringArray& files, int, int)
     dropHover = false;
     repaint();
     for (auto& f : files)
-        if (isInterestedInFileDrag ({ f })) { proc.loadAudioFile (juce::File (f)); break; }
+        if (isInterestedInFileDrag ({ f }))
+        {
+            if (vocalsTab) proc.loadVocalFile (juce::File (f));
+            else proc.loadAudioFile (juce::File (f));
+            break;
+        }
 }
 
 void MelodyverseEditor::panel (juce::Graphics& g, juce::Rectangle<int> r, const juce::String& title)
@@ -565,7 +712,7 @@ void MelodyverseEditor::paint (juce::Graphics& g)
     g.drawText ("listen  -  transcribe  -  compose in 30 world styles", h, juce::Justification::centredLeft);
 
     panel (g, composeArea, "COMPOSE");
-    panel (g, listenArea, "LISTEN");
+    panel (g, listenArea, {});
     panel (g, bottomArea, {});
 
     // progress bar
@@ -588,7 +735,7 @@ void MelodyverseEditor::paintOverChildren (juce::Graphics& g)
     g.drawRect (getLocalBounds(), 3);
     g.setColour (juce::Colours::white);
     g.setFont (font (24.0f, true));
-    g.drawText ("Drop to listen", getLocalBounds(), juce::Justification::centred);
+    g.drawText (vocalsTab ? "Drop to study the vocal" : "Drop to listen", getLocalBounds(), juce::Justification::centred);
 }
 
 void MelodyverseEditor::resized()
@@ -600,7 +747,7 @@ void MelodyverseEditor::resized()
     r.removeFromBottom (8);
     composeArea = r.removeFromLeft (270);
     r.removeFromLeft (10);
-    listenArea = r.removeFromRight (290);
+    listenArea = r.removeFromRight (340);
     r.removeFromRight (10);
     centreArea = r;
 
@@ -629,9 +776,33 @@ void MelodyverseEditor::resized()
         c.removeFromTop (4);
         styleInfo.setBounds (c);
     }
-    // listen
+    // listen / vocals
     {
-        auto c = listenArea.reduced (14).withTrimmedTop (20);
+        auto tabs = listenArea.reduced (14, 10).removeFromTop (26);
+        listenTab.setBounds (tabs.removeFromLeft (tabs.getWidth() / 2 - 3));
+        tabs.removeFromLeft (6);
+        vocalTabButton.setBounds (tabs);
+        auto v = listenArea.reduced (14).withTrimmedTop (32);
+        auto vrow = [&v] (int h) { auto x = v.removeFromTop (h); v.removeFromTop (6); return x; };
+        auto lr2 = vrow (30);
+        loadVocalButton.setBounds (lr2.removeFromLeft (lr2.getWidth() / 2 - 3));
+        lr2.removeFromLeft (6);
+        recordVocalButton.setBounds (lr2);
+        vrow (5);  // progress bar (shared)
+        auto bottomV = v.removeFromBottom (36);
+        newIdeaButton.setBounds (bottomV);
+        v.removeFromBottom (6);
+        ideaBox.setBounds (v.removeFromBottom (26));
+        v.removeFromBottom (4);
+        vocalHint.setBounds (v.removeFromBottom (30));
+        auto listArea = v.removeFromBottom (5 * 48 + 2);
+        progressionList.setBounds (listArea);
+        progressionsLabel.setBounds (v.removeFromBottom (16));
+        v.removeFromBottom (4);
+        vocalReportText.setBounds (v);
+    }
+    {
+        auto c = listenArea.reduced (14).withTrimmedTop (32);
         auto row = [&c] (int h) { auto x = c.removeFromTop (h); c.removeFromTop (6); return x; };
         auto lr = row (30);
         loadButton.setBounds (lr.removeFromLeft (lr.getWidth() / 2 - 3));
@@ -659,8 +830,8 @@ void MelodyverseEditor::resized()
         auto all = strips.removeFromBottom (24);
         dragAll->setBounds (all.withSizeKeepingCentre (220, 24));
         strips.removeFromBottom (6);
-        const int w = (strips.getWidth() - 3 * 8) / 4;
-        for (int i = 0; i < mv::kNumParts; ++i)
+        const int w = (strips.getWidth() - (mv::kNumParts - 1) * 8) / mv::kNumParts;
+        for (int i : kStripOrder)
         {
             auto s = strips.removeFromLeft (w);
             strips.removeFromLeft (8);

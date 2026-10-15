@@ -127,6 +127,84 @@ mv::Analysis analysisFromTree (const juce::ValueTree& v)
     return a;
 }
 
+juce::String eventsToString (const std::vector<mv::ChordEvent>& evs)
+{
+    juce::StringArray a;
+    for (auto& c : evs) a.add (d2s (c.start) + "," + d2s (c.duration) + "," + chordToString (c.chord));
+    return a.joinIntoString (";");
+}
+
+std::vector<mv::ChordEvent> eventsFromString (const juce::String& s)
+{
+    std::vector<mv::ChordEvent> out;
+    for (auto& item : juce::StringArray::fromTokens (s, ";", ""))
+    {
+        auto t = juce::StringArray::fromTokens (item, ",", "");
+        if (t.size() >= 5) out.push_back ({ t[0].getDoubleValue(), t[1].getDoubleValue(), chordFromTokens (t, 2) });
+    }
+    return out;
+}
+
+juce::ValueTree vocalToTree (const mv::VocalReport& r, const std::vector<mv::ProgressionOption>& opts, const juce::String& label, int option, int idea)
+{
+    juce::ValueTree v ("Vocal");
+    v.setProperty ("label", label, nullptr);
+    v.setProperty ("option", option, nullptr);
+    v.setProperty ("idea", idea, nullptr);
+    v.setProperty ("bpm", r.bpm, nullptr);
+    v.setProperty ("origin", r.originSeconds, nullptr);
+    v.setProperty ("duration", r.duration, nullptr);
+    v.setProperty ("keyTonic", r.key.tonic, nullptr);
+    v.setProperty ("keyMode", juce::String (r.key.mode), nullptr);
+    v.setProperty ("keyConfidence", r.keyConfidence, nullptr);
+    v.setProperty ("thaat", juce::String (r.thaat), nullptr);
+    juce::StringArray notes, insights;
+    for (size_t i = 0; i < r.notes.size(); ++i)
+        notes.add (d2s (r.notes[i].start) + "," + d2s (r.notes[i].end) + "," + juce::String (r.notes[i].pitch) + "," + juce::String (r.notes[i].velocity)
+                   + "," + juce::String (i < r.bendFrom.size() ? r.bendFrom[i] : 0) + "," + juce::String (i < r.ornamental.size() && r.ornamental[i] ? 1 : 0));
+    for (auto& s : r.insights) insights.add (s);
+    v.setProperty ("notes", notes.joinIntoString (";"), nullptr);
+    v.setProperty ("insights", insights.joinIntoString ("\n"), nullptr);
+    for (auto& o : opts)
+    {
+        juce::ValueTree ov ("Option");
+        ov.setProperty ("name", juce::String (o.name), nullptr);
+        ov.setProperty ("description", juce::String (o.description), nullptr);
+        ov.setProperty ("style", juce::String (o.style), nullptr);
+        ov.setProperty ("roman", juce::String (o.roman), nullptr);
+        ov.setProperty ("fit", o.fit, nullptr);
+        ov.setProperty ("chords", eventsToString (o.chords), nullptr);
+        v.appendChild (ov, nullptr);
+    }
+    return v;
+}
+
+void vocalFromTree (const juce::ValueTree& v, mv::VocalReport& r, std::vector<mv::ProgressionOption>& opts)
+{
+    r.bpm = v.getProperty ("bpm", 120.0);
+    r.originSeconds = v.getProperty ("origin", 0.0);
+    r.duration = v.getProperty ("duration", 0.0);
+    juce::String mode = v.getProperty ("keyMode", "major").toString();
+    r.key = { (int) v.getProperty ("keyTonic", 0), mv::hasScale (mode.toStdString()) ? mode.toStdString() : "major" };
+    r.keyConfidence = v.getProperty ("keyConfidence", 0.0);
+    r.thaat = v.getProperty ("thaat").toString().toStdString();
+    for (auto& item : juce::StringArray::fromTokens (v.getProperty ("notes").toString(), ";", ""))
+    {
+        auto t = juce::StringArray::fromTokens (item, ",", "");
+        if (t.size() < 6) continue;
+        r.notes.push_back ({ t[0].getDoubleValue(), t[1].getDoubleValue(), t[2].getIntValue(), t[3].getIntValue() });
+        r.bendFrom.push_back (t[4].getIntValue());
+        r.ornamental.push_back (t[5].getIntValue() != 0);
+        r.attack.push_back (t[0].getDoubleValue());
+    }
+    for (auto& line : juce::StringArray::fromTokens (v.getProperty ("insights").toString(), "\n", "")) r.insights.push_back (line.toStdString());
+    for (auto ov : v)
+        if (ov.hasType ("Option"))
+            opts.push_back ({ ov.getProperty ("name").toString().toStdString(), ov.getProperty ("description").toString().toStdString(),
+                              ov.getProperty ("style").toString().toStdString(), ov.getProperty ("roman").toString().toStdString(),
+                              eventsFromString (ov.getProperty ("chords").toString()), (double) ov.getProperty ("fit", 0.0) });
+}
+
 juce::String safeName (juce::String s) { return s.replaceCharacters (" /\\:#", "_____").retainCharacters ("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"); }
 } // namespace
 
@@ -168,8 +246,8 @@ MelodyverseProcessor::~MelodyverseProcessor()
 juce::AudioProcessorValueTreeState::ParameterLayout MelodyverseProcessor::createLayout()
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
-    const char* names[] = { "Melody", "Chords", "Bass", "Drums" };
-    const float vols[] = { 0.9f, 0.5f, 0.75f, 0.7f };
+    const char* names[] = { "Melody", "Chords", "Bass", "Drums", "Vocal guide" };
+    const float vols[] = { 0.9f, 0.5f, 0.75f, 0.7f, 0.5f };
     for (int p = 0; p < mv::kNumParts; ++p)
     {
         juce::String id (kPartIds[p]);
@@ -324,11 +402,13 @@ std::optional<mv::Analysis> MelodyverseProcessor::getAnalysis() const
 void MelodyverseProcessor::commitScore (mv::Score s, const juce::String& src)
 {
     const int styleIdx = mv::styleIndex (s.style);
-    for (int p = 0; p < 3; ++p)
+    for (int p : { 0, 1, 2, 4 })
         if (auto* t = s.track (mv::partName ((mv::Part) p)); t && ! t->isDrums)
         {
             if (settings.instruments[(size_t) p].isNotEmpty())
                 t->instrument = settings.instruments[(size_t) p].toStdString();
+            else if (p == 4)
+                t->instrument = "bansuri";
             else if (styleIdx >= 0)  // back to the style's own colour
             {
                 const auto& st = mv::styles()[(size_t) styleIdx];
@@ -458,31 +538,131 @@ void MelodyverseProcessor::startAnalysis (std::vector<float> mono, double sr, do
     });
 }
 
-void MelodyverseProcessor::loadAudioFile (const juce::File& file)
+bool MelodyverseProcessor::readAudioFile (const juce::File& file, std::vector<float>& mono, double& sr)
 {
-    if (busy.load()) { setStatus ("Still listening to the previous audio..."); return; }
     std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
-    if (! reader) { setStatus ("Can't read " + file.getFileName() + " (try WAV, AIFF, FLAC, OGG or MP3)"); return; }
+    if (! reader) { setStatus ("Can't read " + file.getFileName() + " (try WAV, AIFF, FLAC, OGG or MP3)"); return false; }
     const auto len = (int) std::min<juce::int64> (reader->lengthInSamples, (juce::int64) (kMaxFileSeconds * reader->sampleRate));
     juce::AudioBuffer<float> buf ((int) reader->numChannels, len);
     reader->read (&buf, 0, len, 0, true, true);
-    std::vector<float> mono ((size_t) len, 0.0f);
+    mono.assign ((size_t) len, 0.0f);
     for (int c = 0; c < buf.getNumChannels(); ++c)
     {
         auto* d = buf.getReadPointer (c);
         for (int i = 0; i < len; ++i) mono[(size_t) i] += d[i] / (float) buf.getNumChannels();
     }
-    startAnalysis (std::move (mono), reader->sampleRate, 0, file.getFileNameWithoutExtension());
+    sr = reader->sampleRate;
+    return true;
 }
 
-void MelodyverseProcessor::setCapturing (bool shouldCapture)
+void MelodyverseProcessor::loadAudioFile (const juce::File& file)
+{
+    if (busy.load()) { setStatus ("Still listening to the previous audio..."); return; }
+    std::vector<float> mono;
+    double sr = 44100;
+    if (readAudioFile (file, mono, sr)) startAnalysis (std::move (mono), sr, 0, file.getFileNameWithoutExtension());
+}
+
+void MelodyverseProcessor::loadVocalFile (const juce::File& file)
+{
+    if (busy.load()) { setStatus ("Still listening to the previous audio..."); return; }
+    std::vector<float> mono;
+    double sr = 44100;
+    if (readAudioFile (file, mono, sr)) startVocalAnalysis (std::move (mono), sr, 0, file.getFileNameWithoutExtension());
+}
+
+void MelodyverseProcessor::startVocalAnalysis (std::vector<float> mono, double sr, double fixedBpm, const juce::String& label)
+{
+    if (busy.exchange (true)) { setStatus ("Still listening to the previous audio..."); return; }
+    cancelAnalysis = false;
+    progress = 0;
+    setStatus ("Studying the vocal: " + label + "...");
+    pool.addJob ([this, mono = std::move (mono), sr, fixedBpm, label]() mutable {
+        mv::AnalyzeOptions o;
+        o.fixedBpm = fixedBpm;
+        o.cancel = &cancelAnalysis;
+        o.progress = [this] (float p) { progress = p * 0.9f; };
+        auto report = mv::analyzeVocal (mono.data(), mono.size(), sr, o);
+        auto options = mv::suggestProgressions (report, 5);
+        if (! cancelAnalysis.load())
+        {
+            {
+                const juce::ScopedLock lock (modelLock);
+                vocalReport = report;
+                vocalOptions = options;
+                vocalLabel = label;
+                vocalOption = -1;
+            }
+            if (report.notes.empty())
+                setStatus ("No clear singing found in " + label + " - use a dry vocal (a cappella or an isolated vocal stem)");
+            else
+                setStatus ("Vocal studied: Sa = " + juce::String (mv::pcName (report.key.tonic, report.key.prefersFlats())) + ", " + juce::String (report.thaat)
+                           + " thaat, " + juce::String (report.bpm, 0) + " BPM - pick a chord progression on the right");
+        }
+        progress = 1;
+        busy = false;
+        ++version;
+    });
+}
+
+std::optional<mv::VocalReport> MelodyverseProcessor::getVocalReport() const
+{
+    const juce::ScopedLock lock (modelLock);
+    return vocalReport;
+}
+
+std::vector<mv::ProgressionOption> MelodyverseProcessor::getVocalOptions() const
+{
+    const juce::ScopedLock lock (modelLock);
+    return vocalOptions;
+}
+
+juce::String MelodyverseProcessor::getVocalLabel() const
+{
+    const juce::ScopedLock lock (modelLock);
+    return vocalLabel;
+}
+
+void MelodyverseProcessor::applyVocalOption (int index)
+{
+    std::optional<mv::VocalReport> r;
+    mv::ProgressionOption opt;
+    {
+        const juce::ScopedLock lock (modelLock);
+        if (! vocalReport || index < 0 || index >= (int) vocalOptions.size()) return;
+        r = vocalReport;
+        opt = vocalOptions[(size_t) index];
+        vocalOption = index;
+    }
+    auto s = mv::arrangeForVocal (*r, opt, (mv::VocalMelodyIdea) vocalIdea, settings.seed);
+    static const char* const ideas[] = { "answer phrases", "harmony a 3rd above", "harmony a 6th below" };
+    commitScore (std::move (s), juce::String (opt.name) + " + " + ideas[juce::jlimit (0, 2, vocalIdea)] + " for " + getVocalLabel());
+    setStatus ("Arranged \"" + juce::String (opt.name) + "\" around the vocal: " + juce::String (opt.roman)
+               + ".  Line up: " + juce::String (r->originSeconds, 2) + " s into your vocal = bar 1");
+}
+
+void MelodyverseProcessor::newVocalIdea()
+{
+    settings.seed = (juce::uint32) juce::Random::getSystemRandom().nextInt (1000000);
+    applyVocalOption (vocalOption < 0 ? 0 : vocalOption);
+}
+
+void MelodyverseProcessor::setVocalIdea (int idea)
+{
+    vocalIdea = juce::jlimit (0, 2, idea);
+    if (vocalOption >= 0) applyVocalOption (vocalOption);
+}
+
+void MelodyverseProcessor::setCapturing (bool shouldCapture, CaptureTarget target)
 {
     if (shouldCapture)
     {
         if (busy.load()) { setStatus ("Still listening to the previous audio..."); return; }
+        captureTarget = target;
         captureLength = 0;
         capturing = true;
-        setStatus ("Capturing the plugin input... press play in your DAW (or sing into the mic in standalone)");
+        setStatus (target == CaptureTarget::Vocal ? "Recording the vocal from the plugin input... sing, or play your vocal track, then press Stop"
+                                                  : "Capturing the plugin input... press play in your DAW (or sing into the mic in standalone)");
         return;
     }
     if (! capturing.exchange (false) && captureLength.load() == 0) return;
@@ -490,7 +670,10 @@ void MelodyverseProcessor::setCapturing (bool shouldCapture)
     captureLength = 0;
     if (len < (size_t) (sampleRateHz * 2)) { setStatus ("Captured less than 2 seconds - nothing to analyse"); return; }
     std::vector<float> mono (captureBuffer.begin(), captureBuffer.begin() + (long) len);
-    startAnalysis (std::move (mono), sampleRateHz, hostBpm.load(), "captured input");
+    if (captureTarget == CaptureTarget::Vocal)
+        startVocalAnalysis (std::move (mono), sampleRateHz, hostBpm.load(), "recorded vocal");
+    else
+        startAnalysis (std::move (mono), sampleRateHz, hostBpm.load(), "captured input");
 }
 
 double MelodyverseProcessor::capturedSeconds() const { return (double) captureLength.load() / sampleRateHz; }
@@ -502,7 +685,7 @@ void MelodyverseProcessor::timerCallback()
         retiredSequence.reset();  // free the old pattern off the audio thread
     }
     if (! capturing.load() && captureLength.load() > 0 && captureLength.load() >= captureBuffer.size())
-        setCapturing (false);  // buffer filled up
+        setCapturing (false, captureTarget);  // buffer filled up
 }
 
 // ---------------------------------------------------------------------------
@@ -580,6 +763,7 @@ void MelodyverseProcessor::getStateInformation (juce::MemoryBlock& destData)
         const juce::ScopedLock lock (modelLock);
         root.appendChild (scoreToTree (score, source), nullptr);
         if (analysis) root.appendChild (analysisToTree (*analysis, analysisLabel), nullptr);
+        if (vocalReport) root.appendChild (vocalToTree (*vocalReport, vocalOptions, vocalLabel, vocalOption, vocalIdea), nullptr);
     }
     if (auto xml = root.createXml()) copyXmlToBinary (*xml, destData);
 }
@@ -610,6 +794,19 @@ void MelodyverseProcessor::setStateInformation (const void* data, int sizeInByte
         const juce::ScopedLock lock (modelLock);
         analysis = analysisFromTree (an);
         analysisLabel = an.getProperty ("label").toString();
+    }
+    auto vt = root.getChildWithName ("Vocal");
+    if (vt.isValid())
+    {
+        mv::VocalReport r;
+        std::vector<mv::ProgressionOption> opts;
+        vocalFromTree (vt, r, opts);
+        const juce::ScopedLock lock (modelLock);
+        vocalReport = r;
+        vocalOptions = opts;
+        vocalLabel = vt.getProperty ("label").toString();
+        vocalOption = vt.getProperty ("option", -1);
+        vocalIdea = vt.getProperty ("idea", 0);
     }
     auto sc = root.getChildWithName ("Score");
     if (sc.isValid()) commitScore (scoreFromTree (sc), sc.getProperty ("source").toString());

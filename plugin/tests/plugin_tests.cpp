@@ -186,13 +186,92 @@ int main (int argc, char** argv)
         CHECK (q.settings.style == "spanish_flamenco");
     }
 
+    std::printf ("[..] vocals: study a sung line, suggest chords, arrange around it\n");
+    {
+        mv::GenerateOptions o;
+        o.style = "punjabi_sad";
+        o.key = mv::Key::parse ("A kafi");
+        o.bpm = 80;
+        o.bars = 8;
+        o.seed = 11;
+        o.progression = "i iv bVII i";
+        o.chords = o.bass = o.drums = false;
+        auto singer = mv::generate (o);
+        singer.track ("Melody")->instrument = "bansuri";
+        for (auto& n : singer.track ("Melody")->notes)
+            if (std::fmod (n.end() + 1e-6, 8.0) < 0.01 && n.duration > 1.0) n.duration -= 0.75;
+        std::vector<float> l, r;
+        mv::renderScore (singer, 44100, l, r, 1.0, 1, 0.0f);
+        juce::AudioBuffer<float> vb (2, (int) l.size());
+        for (size_t i = 0; i < l.size(); ++i) { vb.setSample (0, (int) i, l[i]); vb.setSample (1, (int) i, r[i]); }
+        auto vf = tmp.getChildFile ("vocal.wav");
+        vf.deleteFile();
+        {
+            juce::WavAudioFormat wav;
+            std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (new juce::FileOutputStream (vf), 44100, 2, 16, {}, 0));
+            CHECK (w != nullptr);
+            if (w) w->writeFromAudioSampleBuffer (vb, 0, vb.getNumSamples());
+        }
+        p.loadVocalFile (vf);
+        waitWhileBusy (p);
+        auto vr = p.getVocalReport();
+        CHECK (vr.has_value());
+        auto opts = p.getVocalOptions();
+        CHECK (opts.size() == 5);
+        if (vr)
+        {
+            std::printf ("    Sa %s, thaat %s, %.0f BPM, %zu notes, %d meend; top: %s (%.0f%%)\n", mv::pcName (vr->key.tonic).c_str(), vr->thaat.c_str(), vr->bpm,
+                         vr->notes.size(), vr->count ("meend"), opts.empty() ? "-" : opts[0].name.c_str(), opts.empty() ? 0.0 : opts[0].fit * 100);
+            CHECK (vr->key.tonic == 9);
+            CHECK (! vr->insights.empty());
+        }
+        p.applyVocalOption (0);
+        auto arr = p.getScore();
+        CHECK (arr.track ("Vocal") && ! arr.track ("Vocal")->notes.empty());
+        CHECK (arr.track ("Chords") && arr.track ("Melody"));
+        CHECK (p.getVocalOptionIndex() == 0);
+        p.setVocalIdea (1);
+        auto harm = p.getScore();
+        CHECK (harm.track ("Melody")->notes.size() == harm.track ("Vocal")->notes.size());
+        // the vocal guide plays on its own MIDI channel (4)
+        bool vocalMidi = false;
+        head.ppq = 0;
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (250);  // let the UI thread recycle the old pattern, as a host would
+        for (int b = 0; b < 300 && ! vocalMidi; ++b)
+        {
+            buf.clear(); midi.clear();
+            p.processBlock (buf, midi);
+            head.ppq += beatsPerBlock;
+            for (const auto meta : midi) vocalMidi |= meta.getMessage().isNoteOn() && meta.getMessage().getChannel() == 4;
+        }
+        CHECK (vocalMidi);
+        juce::MemoryBlock st;
+        p.getStateInformation (st);
+        MelodyverseProcessor q;
+        q.setStateInformation (st.getData(), (int) st.getSize());
+        CHECK (q.getVocalReport().has_value() && q.getVocalOptions().size() == 5);
+        CHECK (q.getVocalOptionIndex() == 0 && q.getVocalIdea() == 1);
+        CHECK (q.getScore().track ("Vocal") && q.getScore().track ("Vocal")->notes.size() == harm.track ("Vocal")->notes.size());
+        q.newVocalIdea();  // re-arranging after a reload must work from the saved report
+        CHECK (q.getScore().track ("Vocal") && q.getScore().track ("Chords"));
+        p.setVocalIdea (0);
+    }
+
     std::printf ("[..] editor\n");
     {
         std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
         CHECK (ed != nullptr);
-        ed->setSize (1120, 680);
+        ed->setSize (1220, 720);
         for (int i = 0; i < 5; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil (40);
         snapshot (*ed, shots, "melodyverse_listen");
+        if (auto* me = dynamic_cast<MelodyverseEditor*> (ed.get()))
+        {
+            p.applyVocalOption (0);
+            me->showTab (true);
+            for (int i = 0; i < 5; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil (40);
+            snapshot (*ed, shots, "melodyverse_vocals");
+            me->showTab (false);
+        }
         p.settings.style = "hollywood_epic";
         p.settings.keyTonic = -1;
         p.settings.mode = {};

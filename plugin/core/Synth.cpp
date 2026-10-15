@@ -207,7 +207,7 @@ double midiToHz (double m) { return 440.0 * std::pow (2.0, (m - 69.0) / 12.0); }
 
 const char* partName (Part p)
 {
-    static const char* const n[] = { "Melody", "Chords", "Bass", "Drums" };
+    static const char* const n[] = { "Melody", "Chords", "Bass", "Drums", "Vocal" };
     return n[(int) p];
 }
 
@@ -651,10 +651,11 @@ void Player::process (double ppqStart, double bpm, bool playing, int numSamples,
 }
 
 void renderScore (const Score& score, double sampleRate, std::vector<float>& left, std::vector<float>& right,
-                  double tailSeconds, int loops)
+                  double tailSeconds, int loops, float reverb)
 {
     Player p;
     p.prepare (sampleRate);
+    p.synth.reverbMix = reverb;
     p.sendMidi = false;
     p.setScore (score);
     const int block = 512;

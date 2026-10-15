@@ -103,8 +103,16 @@ On the synthetic test songs in `tests/` (known ground truth), it recovers tempo 
 - **Listen:** drop a song on the plugin (WAV, AIFF, FLAC, OGG, MP3), or press **Capture input** and play audio into it. That can be a sidechain or input routing in your DAW, or your mic in the standalone app, so you can even hum a tune. It detects key, mode, tempo, chords and melody, names the famous progression it uses, and suggests the closest styles.
   - **TRANSCRIBE IT:** the song's own melody, chords and bass become a playable, draggable MIDI arrangement.
   - **NEW MELODY OVER IT:** an original part in the selected style, written over the song's chords, key and tempo.
+- **Vocals tab:** drop in a vocal (an a cappella or isolated vocal stem), or record one. Melodyverse studies it in depth with a Hindustani/Punjabi lens:
+  - **Scale:** Sa (tonic), thaat (Bilawal, Khamaj, Kafi, Asavari, Bhairavi …, plus the Western mode) and every swara used, komal and tivra included.
+  - **Voice:** range, comfortable zone and voice type.
+  - **Ornaments:** **meend** glides, **murki**, **kan swar**, and **vibrato** rate and depth.
+  - **Accuracy:** pitch accuracy in cents and tuning reference.
+  - **Shape:** phrases, breaths and contour, the repeating **hook**, tempo, swing and dynamics.
+  - **Chords:** it then ranks the **top 5 chord progressions** that fit the singing bar by bar. One is tailor-made; the rest come from Punjabi sad (Kafi), bhangra (Khamaj), Punjabi pop, Punjabi R&B, Sufi, lo-fi and cinematic loops.
+  - **Arrangement:** click one to hear a full arrangement under the vocal guide, with **answer phrases** between your lines or a **harmony** a 3rd above or 6th below.
 - **Get the notes out:** drag any part (or the full arrangement) from its **drag MIDI** pill straight into your timeline. You can also enable **MIDI out** (melody ch.1, chords ch.2, bass ch.3, drums ch.10) to drive your own instruments, or use **Save MIDI / Save WAV**.
-- Per-part on/off, volume and instrument (piano, strings, brass, flute, bansuri, sitar, tumbi, harmonium, nylon guitar, oud, 808, supersaw…). Everything is saved with your project.
+- Per-part on/off, volume and instrument (the vocal guide is its own part, MIDI ch.4) (piano, strings, brass, flute, bansuri, sitar, tumbi, harmonium, nylon guitar, oud, 808, supersaw…). Everything is saved with your project.
 
 ### Download
 

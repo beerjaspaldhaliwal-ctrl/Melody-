@@ -4,8 +4,8 @@
 
 juce::Colour PianoRoll::partColour (int part)
 {
-    static const juce::uint32 c[] = { 0xffff5ca8, 0xff6c8cff, 0xff2ee6a6, 0xffffc145 };
-    return juce::Colour (c[juce::jlimit (0, 3, part)]);
+    static const juce::uint32 c[] = { 0xffff5ca8, 0xff6c8cff, 0xff2ee6a6, 0xffffc145, 0xffeef1ff };
+    return juce::Colour (c[juce::jlimit (0, 4, part)]);
 }
 
 void PianoRoll::setScore (const mv::Score& s)
@@ -32,7 +32,7 @@ void PianoRoll::setPlayhead (double beat, bool playing)
 
 void PianoRoll::setPartVisible (int part, bool v)
 {
-    if (part >= 0 && part < 4 && visible[(size_t) part] != v) { visible[(size_t) part] = v; repaint(); }
+    if (part >= 0 && part < 5 && visible[(size_t) part] != v) { visible[(size_t) part] = v; repaint(); }
 }
 
 void PianoRoll::paint (juce::Graphics& g)
@@ -101,7 +101,7 @@ void PianoRoll::paint (juce::Graphics& g)
     }
 
     // notes: chords and bass first, melody on top
-    for (int part : { 1, 2, 0 })
+    for (int part : { 1, 2, 0, 4 })
     {
         if (! visible[(size_t) part]) continue;
         auto* t = score.track (mv::partName ((mv::Part) part));
@@ -110,8 +110,13 @@ void PianoRoll::paint (juce::Graphics& g)
         for (auto& n : t->notes)
         {
             auto r = juce::Rectangle<float> (xOf (n.start), yOf (n.pitch), std::max (2.0f, xOf (n.end()) - xOf (n.start) - 1.0f), std::max (2.0f, rowH - 1.0f));
-            g.setColour (col.withAlpha (part == 0 ? 0.95f : 0.55f).withMultipliedBrightness (0.6f + 0.4f * (float) n.velocity / 127.0f));
+            g.setColour (col.withAlpha (part == 0 || part == 4 ? 0.95f : 0.55f).withMultipliedBrightness (0.6f + 0.4f * (float) n.velocity / 127.0f));
             g.fillRoundedRectangle (r, std::min (3.0f, r.getHeight() / 2));
+            if (part == 4 && n.bendFrom != 0)  // show the meend sliding into the note
+            {
+                g.setColour (col.withAlpha (0.6f));
+                g.drawLine (r.getX() - 6, yOf (n.pitch + (int) n.bendFrom) + rowH / 2, r.getX() + 2, r.getCentreY(), 1.5f);
+            }
         }
     }
 

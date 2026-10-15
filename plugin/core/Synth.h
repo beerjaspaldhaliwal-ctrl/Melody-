@@ -14,8 +14,8 @@
 namespace mv
 {
 
-enum class Part { Melody = 0, Chords = 1, Bass = 2, Drums = 3 };
-constexpr int kNumParts = 4;
+enum class Part { Melody = 0, Chords = 1, Bass = 2, Drums = 3, Vocal = 4 };
+constexpr int kNumParts = 5;
 const char* partName (Part p);
 int partFromTrackName (const std::string& name);  // -1 if unknown
 
@@ -40,7 +40,7 @@ public:
     void render (float* left, float* right, int numSamples);  // adds into buffers
     double sampleRate() const { return sr; }
 
-    std::array<float, kNumParts> partGain { 0.9f, 0.5f, 0.75f, 0.7f };
+    std::array<float, kNumParts> partGain { 0.9f, 0.5f, 0.75f, 0.7f, 0.5f };
     float masterGain = 0.8f;
     float reverbMix = 0.16f;
 
@@ -114,8 +114,8 @@ public:
     void stop (MidiOut* midi, int sampleOffset = 0);
 
     SynthEngine synth;
-    std::array<bool, kNumParts> partEnabled { true, true, true, true };
-    std::array<int, kNumParts> midiChannel { 0, 1, 2, 9 };  // zero-based
+    std::array<bool, kNumParts> partEnabled { true, true, true, true, true };
+    std::array<int, kNumParts> midiChannel { 0, 1, 2, 9, 3 };  // zero-based: melody 1, chords 2, bass 3, drums 10, vocal guide 4
     bool sendMidi = true;
 
     const std::vector<Event>& events() const { return seq_->events; }
@@ -131,6 +131,6 @@ private:
 
 // Offline render of a whole score (for WAV export and tests). Returns interleaved-free stereo.
 void renderScore (const Score& score, double sampleRate, std::vector<float>& left, std::vector<float>& right,
-                  double tailSeconds = 2.0, int loops = 1);
+                  double tailSeconds = 2.0, int loops = 1, float reverb = 0.16f);
 
 } // namespace mv

@@ -22,6 +22,6 @@ private:
     mv::Score score;
     double playhead = 0;
     bool isPlaying = false;
-    std::array<bool, 4> visible { true, true, true, true };
+    std::array<bool, 5> visible { true, true, true, true, true };
     int lowPitch = 36, highPitch = 96;
 };

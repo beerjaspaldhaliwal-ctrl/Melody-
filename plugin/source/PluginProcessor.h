@@ -3,6 +3,7 @@
 #include "Analysis.h"
 #include "Generator.h"
 #include "Synth.h"
+#include "Vocal.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_formats/juce_audio_formats.h>
@@ -61,7 +62,20 @@ public:
     void transcribe();
     void matchStyle();
     void loadAudioFile (const juce::File& file);
-    void setCapturing (bool shouldCapture);
+    enum class CaptureTarget { Song, Vocal };
+    void setCapturing (bool shouldCapture, CaptureTarget target = CaptureTarget::Song);
+    CaptureTarget getCaptureTarget() const { return captureTarget; }
+
+    // ---- vocals ----
+    void loadVocalFile (const juce::File& file);
+    void applyVocalOption (int index);           // build the arrangement around the vocal
+    void newVocalIdea();                         // same chords, fresh melody
+    void setVocalIdea (int idea);                // 0 answers, 1 harmony above, 2 harmony below
+    int getVocalIdea() const { return vocalIdea; }
+    int getVocalOptionIndex() const { return vocalOption; }
+    std::optional<mv::VocalReport> getVocalReport() const;
+    std::vector<mv::ProgressionOption> getVocalOptions() const;
+    juce::String getVocalLabel() const;
     bool isCapturing() const { return capturing.load(); }
     double capturedSeconds() const;
     void setPartInstrument (int part, const juce::String& instrument);
@@ -86,13 +100,15 @@ public:
 
     juce::AudioProcessorValueTreeState params;
 
-    static constexpr const char* kPartIds[mv::kNumParts] = { "melody", "chords", "bass", "drums" };
+    static constexpr const char* kPartIds[mv::kNumParts] = { "melody", "chords", "bass", "drums", "vocal" };
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     void commitScore (mv::Score score, const juce::String& source);
     void setStatus (const juce::String& s);
     void startAnalysis (std::vector<float> mono, double sampleRate, double fixedBpm, const juce::String& label);
+    void startVocalAnalysis (std::vector<float> mono, double sampleRate, double fixedBpm, const juce::String& label);
+    bool readAudioFile (const juce::File& file, std::vector<float>& mono, double& sampleRate);
     void timerCallback() override;
     std::vector<mv::ChordEvent> currentTimeline() const;
     mv::Key currentKey (const mv::Style& st) const;
@@ -112,11 +128,16 @@ private:
     std::vector<float> captureBuffer;
     std::atomic<size_t> captureLength { 0 };
     std::atomic<bool> capturing { false };
+    CaptureTarget captureTarget = CaptureTarget::Song;
 
     // model
     mutable juce::CriticalSection modelLock;
     mv::Score score;
     std::optional<mv::Analysis> analysis;
+    std::optional<mv::VocalReport> vocalReport;
+    std::vector<mv::ProgressionOption> vocalOptions;
+    juce::String vocalLabel;
+    int vocalOption = -1, vocalIdea = 0;
     juce::String status { "Ready" }, source { "generated" }, analysisLabel;
     std::atomic<float> progress { 0 };
     std::atomic<bool> busy { false };

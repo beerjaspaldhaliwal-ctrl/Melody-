@@ -34,6 +34,19 @@ private:
     bool dragging = false;
 };
 
+// The ranked chord progressions suggested for a vocal.
+class ProgressionList final : public juce::ListBoxModel
+{
+public:
+    std::vector<mv::ProgressionOption> options;
+    bool flats = false;
+    std::function<void (int)> onPick;
+    int getNumRows() override { return (int) options.size(); }
+    void paintListBoxItem (int row, juce::Graphics&, int w, int h, bool selected) override;
+    void listBoxItemClicked (int row, const juce::MouseEvent&) override { if (onPick) onPick (row); }
+    juce::String getTooltipForRow (int row) override;
+};
+
 class MelodyverseEditor final : public juce::AudioProcessorEditor,
                                 public juce::FileDragAndDropTarget,
                                 private juce::Timer
@@ -46,6 +59,7 @@ public:
     void paintOverChildren (juce::Graphics&) override;
     void resized() override;
 
+    void showTab (bool vocals);  // false = LISTEN, true = VOCALS
     bool isInterestedInFileDrag (const juce::StringArray& files) override;
     void fileDragEnter (const juce::StringArray&, int, int) override { dropHover = true; repaint(); }
     void fileDragExit (const juce::StringArray&) override { dropHover = false; repaint(); }
@@ -57,6 +71,7 @@ private:
     void readSettingsFromUi();
     void syncUiFromSettings();
     void panel (juce::Graphics&, juce::Rectangle<int>, const juce::String& title);
+    bool vocalsTab = false;
 
     MelodyverseProcessor& proc;
     MelodyverseLookAndFeel lnf;
@@ -74,6 +89,16 @@ private:
     juce::ComboBox quantizeBox;
     juce::Label analysisText, quantizeLabel, tempoHint;
 
+    // vocals
+    juce::TextButton listenTab { "LISTEN" }, vocalTabButton { "VOCALS" };
+    juce::TextButton loadVocalButton { "Load vocal..." }, recordVocalButton { "Record vocal" };
+    juce::TextEditor vocalReportText;
+    juce::Label progressionsLabel, vocalHint;
+    ProgressionList progressionModel;
+    juce::ListBox progressionList { "progressions", &progressionModel };
+    juce::ComboBox ideaBox;
+    juce::TextButton newIdeaButton { "NEW MELODY IDEA" };
+
     // parts
     PianoRoll roll;
     std::array<juce::TextButton, mv::kNumParts> partButtons;
@@ -86,6 +111,7 @@ private:
     juce::TextButton previewButton { "Preview" }, midiOutButton { "MIDI out" }, monitorButton { "Monitor in" };
     juce::TextButton saveMidiButton { "Save MIDI..." }, saveWavButton { "Save WAV..." };
     juce::Slider masterSlider, reverbSlider;
+    static constexpr int kStripOrder[mv::kNumParts] = { 4, 0, 1, 2, 3 };  // vocal guide first
     juce::Label masterLabel, reverbLabel, statusLabel, sourceLabel;
 
     // Declared after every control they attach to, so they are destroyed first
