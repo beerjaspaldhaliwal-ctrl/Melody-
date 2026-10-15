@@ -81,14 +81,17 @@ private:
     std::array<juce::Slider, mv::kNumParts> volSliders;
     std::array<std::unique_ptr<MidiDragHandle>, mv::kNumParts> dragHandles;
     std::unique_ptr<MidiDragHandle> dragAll;
-    std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>> buttonAttachments;
-    std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>> sliderAttachments;
 
     // transport / export
     juce::TextButton previewButton { "Preview" }, midiOutButton { "MIDI out" }, monitorButton { "Monitor in" };
     juce::TextButton saveMidiButton { "Save MIDI..." }, saveWavButton { "Save WAV..." };
     juce::Slider masterSlider, reverbSlider;
     juce::Label masterLabel, reverbLabel, statusLabel, sourceLabel;
+
+    // Declared after every control they attach to, so they are destroyed first
+    // (an attachment outliving its button/slider is a use-after-free on close).
+    std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>> buttonAttachments;
+    std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>> sliderAttachments;
 
     std::unique_ptr<juce::FileChooser> chooser;
     int lastVersion = -1;
