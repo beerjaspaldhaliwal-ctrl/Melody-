@@ -47,6 +47,18 @@ public:
     juce::String getTooltipForRow (int row) override;
 };
 
+// Melody variations written over the user's chords.
+class VariationList final : public juce::ListBoxModel
+{
+public:
+    std::vector<mv::MelodyVariation> variations;
+    std::function<void (int)> onPick;
+    int getNumRows() override { return (int) variations.size(); }
+    void paintListBoxItem (int row, juce::Graphics&, int w, int h, bool selected) override;
+    void listBoxItemClicked (int row, const juce::MouseEvent&) override { if (onPick) onPick (row); }
+    juce::String getTooltipForRow (int row) override;
+};
+
 class MelodyverseEditor final : public juce::AudioProcessorEditor,
                                 public juce::FileDragAndDropTarget,
                                 private juce::Timer
@@ -59,7 +71,7 @@ public:
     void paintOverChildren (juce::Graphics&) override;
     void resized() override;
 
-    void showTab (bool vocals);  // false = LISTEN, true = VOCALS
+    void showTab (int which);  // 0 LISTEN, 1 VOCALS, 2 MELODIES
     bool isInterestedInFileDrag (const juce::StringArray& files) override;
     void fileDragEnter (const juce::StringArray&, int, int) override { dropHover = true; repaint(); }
     void fileDragExit (const juce::StringArray&) override { dropHover = false; repaint(); }
@@ -71,7 +83,7 @@ private:
     void readSettingsFromUi();
     void syncUiFromSettings();
     void panel (juce::Graphics&, juce::Rectangle<int>, const juce::String& title);
-    bool vocalsTab = false;
+    int tab = 0;  // 0 listen, 1 vocals, 2 melodies
 
     MelodyverseProcessor& proc;
     MelodyverseLookAndFeel lnf;
@@ -98,6 +110,15 @@ private:
     juce::ListBox progressionList { "progressions", &progressionModel };
     juce::ComboBox ideaBox;
     juce::TextButton newIdeaButton { "NEW MELODY IDEA" };
+
+    // melody lab
+    juce::TextButton melodiesTab { "MELODIES" };
+    juce::TextButton loadChordsButton { "Load chords (MIDI)..." }, useCurrentButton { "Use current chords" }, useSongButton { "Use song's chords" };
+    juce::ComboBox registerBox;
+    juce::Label labInfo, variationsLabel, labHint;
+    juce::TextButton generateVariationsButton { "GENERATE 8 VARIATIONS" }, moreLikeButton { "More like this" }, shuffleButton { "Shuffle all" };
+    VariationList variationModel;
+    juce::ListBox variationList { "variations", &variationModel };
 
     // parts
     PianoRoll roll;

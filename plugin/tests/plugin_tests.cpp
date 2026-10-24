@@ -257,6 +257,66 @@ int main (int argc, char** argv)
         p.setVocalIdea (0);
     }
 
+    std::printf ("[..] melody lab: chords from a MIDI file -> 8 melody variations\n");
+    {
+        juce::MidiMessageSequence chordsTrack;
+        const int tpq = 960;
+        chordsTrack.addEvent (juce::MidiMessage::tempoMetaEvent (625000), 0);  // 96 BPM
+        const std::vector<std::vector<int>> prog { { 57, 60, 64 }, { 53, 57, 60 }, { 48, 52, 55 }, { 55, 59, 62 } };  // Am F C G
+        for (int rep = 0; rep < 2; ++rep)
+            for (size_t c = 0; c < prog.size(); ++c)
+                for (int note : prog[c])
+                {
+                    double t0 = (rep * 16 + (int) c * 4) * tpq, t1 = t0 + 4 * tpq - 10;
+                    chordsTrack.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 90), t0);
+                    chordsTrack.addEvent (juce::MidiMessage::noteOff (1, note), t1);
+                }
+        chordsTrack.updateMatchedPairs();
+        juce::MidiFile mf;
+        mf.setTicksPerQuarterNote (tpq);
+        mf.addTrack (chordsTrack);
+        auto chordFile = tmp.getChildFile ("my_chords.mid");
+        chordFile.deleteFile();
+        {
+            juce::FileOutputStream out (chordFile);
+            CHECK (mf.writeTo (out));
+        }
+        p.settings.style = "punjabi_bhangra";
+        CHECK (p.loadChordMidi (chordFile));
+        auto chords = p.getLabChords();
+        std::string names;
+        for (auto& c : chords) names += c.chord->name() + " ";
+        std::printf ("    read: %s| key %s\n", names.c_str(), p.getLabKey().name().c_str());
+        CHECK (chords.size() == 8 && chords[0].chord->name() == "Am" && chords[1].chord->name() == "F" && chords[2].chord->name() == "C" && chords[3].chord->name() == "G");
+        CHECK (p.getLabKey().name() == "A minor");
+        auto vars = p.getVariations();
+        CHECK (vars.size() == 8);
+        CHECK (p.getLabSelected() == 0);  // the first one is auditioned straight away
+        auto sc = p.getScore();
+        CHECK (sc.track ("Melody") && sc.track ("Melody")->notes.size() == vars[0].notes.size());
+        CHECK (sc.track ("Melody")->instrument == vars[0].instrument);
+        CHECK (sc.chords.size() == chords.size());
+        p.applyVariation (5);
+        CHECK (p.getLabSelected() == 5 && p.getScore().track ("Melody")->notes.size() == vars[5].notes.size());
+        p.generateVariations (true);  // more like #6
+        auto takes = p.getVariations();
+        CHECK (takes.size() == 8);
+        for (auto& t : takes) CHECK (t.character == vars[5].character);
+        juce::MemoryBlock st;
+        p.getStateInformation (st);
+        MelodyverseProcessor q;
+        q.setStateInformation (st.getData(), (int) st.getSize());
+        auto restored = q.getVariations();
+        CHECK (restored.size() == takes.size());
+        if (restored.size() == takes.size())
+            for (size_t i = 0; i < takes.size(); ++i) CHECK (restored[i].notes.size() == takes[i].notes.size());
+        CHECK (q.getLabChords().size() == chords.size());
+        p.generateVariations (false);  // back to one of each character for the screenshot
+        CHECK (p.useCurrentChords());  // the arrangement's own chords work as a source too
+        CHECK (p.getVariations().size() == 8);
+        CHECK (p.loadChordMidi (chordFile));
+    }
+
     std::printf ("[..] editor\n");
     {
         std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
@@ -267,10 +327,14 @@ int main (int argc, char** argv)
         if (auto* me = dynamic_cast<MelodyverseEditor*> (ed.get()))
         {
             p.applyVocalOption (0);
-            me->showTab (true);
+            me->showTab (1);
             for (int i = 0; i < 5; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil (40);
             snapshot (*ed, shots, "melodyverse_vocals");
-            me->showTab (false);
+            p.loadChordMidi (tmp.getChildFile ("my_chords.mid"));
+            me->showTab (2);
+            for (int i = 0; i < 5; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil (40);
+            snapshot (*ed, shots, "melodyverse_melodies");
+            me->showTab (0);
         }
         p.settings.style = "hollywood_epic";
         p.settings.keyTonic = -1;

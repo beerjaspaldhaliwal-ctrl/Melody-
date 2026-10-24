@@ -1015,6 +1015,21 @@ Score analysisToScore (const Analysis& a, int quantize, const std::string& melod
     return score;
 }
 
+Key keyFromChords (const std::vector<ChordEvent>& timeline)
+{
+    double profile[12] = {};
+    std::vector<TimedChord> chords;
+    for (auto& ev : timeline)
+    {
+        if (! ev.chord) continue;
+        for (int pc : ev.chord->pitchClasses()) profile[pc] += ev.duration * (pc == ev.chord->root ? 1.2 : 1.0);
+        chords.push_back ({ ev.start, ev.start + ev.duration, ev.chord, 1.0 });
+    }
+    if (chords.empty()) return {};
+    Key kk = estimateKeyProfile (profile);
+    return resolveKey (profile, chords, kk).first;
+}
+
 std::vector<ChordEvent> harmonyTimeline (const Analysis& a, int quantize)
 {
     auto score = analysisToScore (a, quantize);

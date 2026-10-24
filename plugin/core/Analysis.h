@@ -60,6 +60,9 @@ Analysis analyze (const float* mono, size_t numSamples, double sampleRate, const
 Score analysisToScore (const Analysis& a, int quantize = 16, const std::string& melodyInstrument = "piano",
                        const std::string& chordInstrument = "strings");
 
+// Key & mode implied by a chord progression (beats), e.g. from an uploaded chord MIDI file.
+Key keyFromChords (const std::vector<ChordEvent>& timeline);
+
 // Chord timeline in beats for writing new melodies over a track's harmony (gaps filled with the tonic).
 std::vector<ChordEvent> harmonyTimeline (const Analysis& a, int quantize = 16);
 

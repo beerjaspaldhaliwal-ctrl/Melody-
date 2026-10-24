@@ -399,7 +399,7 @@ std::optional<mv::Analysis> MelodyverseProcessor::getAnalysis() const
     return analysis;
 }
 
-void MelodyverseProcessor::commitScore (mv::Score s, const juce::String& src)
+void MelodyverseProcessor::commitScore (mv::Score s, const juce::String& src, bool styleInstruments)
 {
     const int styleIdx = mv::styleIndex (s.style);
     for (int p : { 0, 1, 2, 4 })
@@ -407,6 +407,8 @@ void MelodyverseProcessor::commitScore (mv::Score s, const juce::String& src)
         {
             if (settings.instruments[(size_t) p].isNotEmpty())
                 t->instrument = settings.instruments[(size_t) p].toStdString();
+            else if (! styleInstruments)
+                continue;  // keep the instrument the score chose (e.g. a melody variation's own colour)
             else if (p == 4)
                 t->instrument = "bansuri";
             else if (styleIdx >= 0)  // back to the style's own colour
@@ -678,6 +680,187 @@ void MelodyverseProcessor::setCapturing (bool shouldCapture, CaptureTarget targe
 
 double MelodyverseProcessor::capturedSeconds() const { return (double) captureLength.load() / sampleRateHz; }
 
+// ---------------------------------------------------------------------------
+// Melody lab
+// ---------------------------------------------------------------------------
+
+void MelodyverseProcessor::setLabChords (std::vector<mv::ChordEvent> timeline, mv::Key key, double bpm, const juce::String& label)
+{
+    {
+        const juce::ScopedLock lock (modelLock);
+        labTimeline = std::move (timeline);
+        labKey = key;
+        labBpm = bpm;
+        labSource = label;
+        labVariations.clear();
+        labSelected = -1;
+    }
+    ++version;
+}
+
+bool MelodyverseProcessor::loadChordMidi (const juce::File& file)
+{
+    juce::FileInputStream in (file);
+    juce::MidiFile mf;
+    if (! in.openedOk() || ! mf.readFrom (in) || mf.getTimeFormat() <= 0)
+    {
+        setStatus ("Can't read " + file.getFileName() + " as a MIDI file");
+        return false;
+    }
+    const double tpq = mf.getTimeFormat();
+    double bpm = 0;
+    std::vector<mv::Note> notes;
+    for (int t = 0; t < mf.getNumTracks(); ++t)
+    {
+        juce::MidiMessageSequence seq (*mf.getTrack (t));
+        seq.updateMatchedPairs();
+        for (int i = 0; i < seq.getNumEvents(); ++i)
+        {
+            auto* ev = seq.getEventPointer (i);
+            const auto& m = ev->message;
+            if (m.isTempoMetaEvent() && bpm <= 0) bpm = 60.0 / m.getTempoSecondsPerQuarterNote();
+            if (! m.isNoteOn() || m.getChannel() == 10) continue;  // drums carry no harmony
+            double start = m.getTimeStamp() / tpq;
+            double end = ev->noteOffObject ? ev->noteOffObject->message.getTimeStamp() / tpq : start + 1.0;
+            notes.push_back ({ start, std::max (0.05, end - start), m.getNoteNumber(), m.getVelocity() });
+        }
+    }
+    if (notes.empty()) { setStatus (file.getFileName() + " has no notes"); return false; }
+    // start the progression on the bar where its first chord begins
+    double first = 1e9;
+    for (auto& n : notes) first = std::min (first, n.start);
+    const double shift = std::floor (first / 4.0 + 1e-6) * 4.0;
+    for (auto& n : notes) n.start -= shift;
+    auto timeline = mv::chordsFromNotes (notes);
+    if (timeline.empty()) { setStatus ("No chords found in " + file.getFileName()); return false; }
+    auto key = mv::keyFromChords (timeline);
+    setLabChords (timeline, key, bpm, file.getFileNameWithoutExtension());
+    generateVariations (false);
+    return true;
+}
+
+bool MelodyverseProcessor::useCurrentChords()
+{
+    auto s = getScore();
+    std::vector<mv::ChordEvent> tl;
+    for (auto& c : s.chords) if (c.chord && c.start >= 0) tl.push_back (c);
+    if (tl.empty()) { setStatus ("The current arrangement has no chords yet - compose, type a progression or load a chord MIDI"); return false; }
+    setLabChords (tl, s.key, s.bpm, "current arrangement");
+    generateVariations (false);
+    return true;
+}
+
+bool MelodyverseProcessor::useSongChords()
+{
+    auto a = getAnalysis();
+    if (! a) { setStatus ("Analyse a song in the LISTEN tab first"); return false; }
+    auto tl = mv::harmonyTimeline (*a, 16);
+    if (tl.empty()) { setStatus ("No chords were heard in that song"); return false; }
+    setLabChords (tl, a->key, a->bpm, getAnalysisLabel() + " (song)");
+    generateVariations (false);
+    return true;
+}
+
+void MelodyverseProcessor::generateVariations (bool moreLikeSelected)
+{
+    std::vector<mv::ChordEvent> tl;
+    mv::Key key;
+    int focus = -1;
+    {
+        const juce::ScopedLock lock (modelLock);
+        tl = labTimeline;
+        key = labKey;
+        if (moreLikeSelected && labSelected >= 0 && labSelected < (int) labVariations.size()) focus = labVariations[(size_t) labSelected].character;
+    }
+    if (tl.empty()) { setStatus ("Load a chord MIDI file (or use the current / song chords) first"); return; }
+    labSeed = (juce::uint32) juce::Random::getSystemRandom().nextInt (1000000) + 1;
+    labFocus = focus;
+    mv::MelodyLabOptions o;
+    o.seed = labSeed;
+    o.focusCharacter = focus;
+    o.registerShift = labRegister;
+    auto vars = mv::melodyVariations (tl, key, o);
+    {
+        const juce::ScopedLock lock (modelLock);
+        labVariations = vars;
+        labSelected = -1;
+    }
+    applyVariation (0);
+    setStatus (focus >= 0 ? "8 new takes of \"" + juce::String (mv::melodyCharacters()[(size_t) focus].name) + "\" - click one to hear it"
+                          : juce::String ("8 melody variations written over your chords - click one to hear it"));
+}
+
+void MelodyverseProcessor::applyVariation (int index)
+{
+    std::vector<mv::ChordEvent> tl;
+    mv::Key key;
+    mv::MelodyVariation var;
+    double bpm = 0;
+    {
+        const juce::ScopedLock lock (modelLock);
+        if (index < 0 || index >= (int) labVariations.size()) return;
+        tl = labTimeline;
+        key = labKey;
+        var = labVariations[(size_t) index];
+        bpm = labBpm;
+        labSelected = index;
+    }
+    try
+    {
+        mv::GenerateOptions g;
+        g.style = settings.style.toStdString();
+        g.key = key;
+        g.bpm = hostBpm.load() > 0 ? hostBpm.load() : (bpm > 0 ? bpm : 0);
+        g.seed = settings.seed;
+        g.timeline = tl;
+        auto s = mv::generate (g);
+        if (auto* mel = s.track ("Melody"))
+        {
+            mel->notes = var.notes;
+            mel->instrument = var.instrument;
+        }
+        // the arrangement's other parts keep the style's sounds
+        const int styleIdx = mv::styleIndex (s.style);
+        for (int p : { 1, 2 })
+            if (auto* t = s.track (mv::partName ((mv::Part) p)); t && styleIdx >= 0 && settings.instruments[(size_t) p].isEmpty())
+                t->instrument = p == 1 ? mv::styles()[(size_t) styleIdx].chordInstrument : mv::styles()[(size_t) styleIdx].bassInstrument;
+        commitScore (std::move (s), "Melody lab: " + juce::String (var.name) + " over " + getLabSource(), false);
+    }
+    catch (const std::exception& e)
+    {
+        setStatus (juce::String ("Could not arrange: ") + e.what());
+    }
+}
+
+void MelodyverseProcessor::setLabRegister (int shift)
+{
+    labRegister = juce::jlimit (-1, 1, shift);
+}
+
+std::vector<mv::MelodyVariation> MelodyverseProcessor::getVariations() const
+{
+    const juce::ScopedLock lock (modelLock);
+    return labVariations;
+}
+
+std::vector<mv::ChordEvent> MelodyverseProcessor::getLabChords() const
+{
+    const juce::ScopedLock lock (modelLock);
+    return labTimeline;
+}
+
+mv::Key MelodyverseProcessor::getLabKey() const
+{
+    const juce::ScopedLock lock (modelLock);
+    return labKey;
+}
+
+juce::String MelodyverseProcessor::getLabSource() const
+{
+    const juce::ScopedLock lock (modelLock);
+    return labSource;
+}
+
 void MelodyverseProcessor::timerCallback()
 {
     {
@@ -764,6 +947,20 @@ void MelodyverseProcessor::getStateInformation (juce::MemoryBlock& destData)
         root.appendChild (scoreToTree (score, source), nullptr);
         if (analysis) root.appendChild (analysisToTree (*analysis, analysisLabel), nullptr);
         if (vocalReport) root.appendChild (vocalToTree (*vocalReport, vocalOptions, vocalLabel, vocalOption, vocalIdea), nullptr);
+        if (! labTimeline.empty())
+        {
+            juce::ValueTree lab ("MelodyLab");
+            lab.setProperty ("chords", eventsToString (labTimeline), nullptr);
+            lab.setProperty ("keyTonic", labKey.tonic, nullptr);
+            lab.setProperty ("keyMode", juce::String (labKey.mode), nullptr);
+            lab.setProperty ("bpm", labBpm, nullptr);
+            lab.setProperty ("source", labSource, nullptr);
+            lab.setProperty ("seed", (juce::int64) labSeed, nullptr);
+            lab.setProperty ("focus", labFocus, nullptr);
+            lab.setProperty ("register", labRegister, nullptr);
+            lab.setProperty ("selected", labSelected, nullptr);
+            root.appendChild (lab, nullptr);
+        }
     }
     if (auto xml = root.createXml()) copyXmlToBinary (*xml, destData);
 }
@@ -807,6 +1004,29 @@ void MelodyverseProcessor::setStateInformation (const void* data, int sizeInByte
         vocalLabel = vt.getProperty ("label").toString();
         vocalOption = vt.getProperty ("option", -1);
         vocalIdea = vt.getProperty ("idea", 0);
+    }
+    auto lab = root.getChildWithName ("MelodyLab");
+    if (lab.isValid())
+    {
+        // variations are deterministic: rebuild them from the saved chords + seed
+        juce::String mode = lab.getProperty ("keyMode", "major").toString();
+        mv::Key key { (int) lab.getProperty ("keyTonic", 0), mv::hasScale (mode.toStdString()) ? mode.toStdString() : "major" };
+        auto tl = eventsFromString (lab.getProperty ("chords").toString());
+        labSeed = (juce::uint32) (juce::int64) lab.getProperty ("seed", 1);
+        labFocus = lab.getProperty ("focus", -1);
+        labRegister = lab.getProperty ("register", 0);
+        mv::MelodyLabOptions o;
+        o.seed = labSeed;
+        o.focusCharacter = labFocus;
+        o.registerShift = labRegister;
+        auto vars = tl.empty() ? std::vector<mv::MelodyVariation>() : mv::melodyVariations (tl, key, o);
+        const juce::ScopedLock lock (modelLock);
+        labTimeline = tl;
+        labKey = key;
+        labBpm = lab.getProperty ("bpm", 0.0);
+        labSource = lab.getProperty ("source").toString();
+        labVariations = vars;
+        labSelected = lab.getProperty ("selected", -1);
     }
     auto sc = root.getChildWithName ("Score");
     if (sc.isValid()) commitScore (scoreFromTree (sc), sc.getProperty ("source").toString());

@@ -235,6 +235,39 @@ void ProgressionList::paintListBoxItem (int row, juce::Graphics& g, int w, int h
     g.drawText (juce::String (names) + "   |   " + pretty (o.style), inner, juce::Justification::centredLeft, true);
 }
 
+void VariationList::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool selected)
+{
+    if (row < 0 || row >= (int) variations.size()) return;
+    auto& v = variations[(size_t) row];
+    auto r = juce::Rectangle<float> (0, 0, (float) w, (float) h).reduced (2.0f, 2.0f);
+    g.setColour (selected ? PianoRoll::partColour (0).withAlpha (0.25f) : col::field);
+    g.fillRoundedRectangle (r, 6.0f);
+    if (selected)
+    {
+        g.setColour (PianoRoll::partColour (0));
+        g.drawRoundedRectangle (r, 6.0f, 1.2f);
+    }
+    auto inner = r.reduced (8.0f, 3.0f);
+    auto top = inner.removeFromTop (16.0f);
+    auto meter = top.removeFromRight (56.0f);
+    g.setColour (col::bg);
+    g.fillRoundedRectangle (meter.withSizeKeepingCentre (56.0f, 6.0f), 3.0f);
+    g.setGradientFill (juce::ColourGradient (col::accentA, meter.getX(), 0, col::accentB, meter.getRight(), 0, false));
+    g.fillRoundedRectangle (meter.withSizeKeepingCentre (56.0f, 6.0f).withWidth (56.0f * (float) juce::jlimit (0.0, 1.0, v.metrics.score / 100.0)), 3.0f);
+    g.setColour (col::text);
+    g.setFont (font (12.5f, true));
+    g.drawText (juce::String (row + 1) + ".  " + juce::String (v.name), top.withTrimmedRight (6), juce::Justification::centredLeft, true);
+    g.setColour (col::dim);
+    g.setFont (font (10.5f));
+    g.drawText ("strength " + juce::String ((int) std::lround (v.metrics.score)) + "  |  " + juce::String (v.tags) + "  |  " + pretty (v.instrument),
+                inner, juce::Justification::centredLeft, true);
+}
+
+juce::String VariationList::getTooltipForRow (int row)
+{
+    return row >= 0 && row < (int) variations.size() ? juce::String (variations[(size_t) row].description) : juce::String();
+}
+
 juce::String ProgressionList::getTooltipForRow (int row)
 {
     return row >= 0 && row < (int) options.size() ? juce::String (options[(size_t) row].description) : juce::String();
@@ -352,8 +385,8 @@ MelodyverseEditor::MelodyverseEditor (MelodyverseProcessor& p) : AudioProcessorE
         t->setRadioGroupId (7001);
         addAndMakeVisible (*t);
     }
-    listenTab.onClick = [this] { showTab (false); };
-    vocalTabButton.onClick = [this] { showTab (true); };
+    listenTab.onClick = [this] { showTab (0); };
+    vocalTabButton.onClick = [this] { showTab (1); };
     vocalTabButton.setTooltip ("Analyse a vocal in depth and get the chord progressions and melodies that fit it");
     loadVocalButton.setTooltip ("A dry vocal works best: an a cappella, or the vocal stem of your song (WAV, AIFF, FLAC, OGG, MP3)");
     recordVocalButton.setClickingTogglesState (true);
@@ -390,6 +423,48 @@ MelodyverseEditor::MelodyverseEditor (MelodyverseProcessor& p) : AudioProcessorE
     newIdeaButton.onClick = [this] { proc.newVocalIdea(); };
     for (juce::Component* c : std::initializer_list<juce::Component*> { &loadVocalButton, &recordVocalButton, &vocalReportText, &progressionsLabel,
                                                                           &progressionList, &ideaBox, &newIdeaButton, &vocalHint })
+        addChildComponent (c);
+
+    // ---- melody lab tab ----
+    melodiesTab.setClickingTogglesState (true);
+    melodiesTab.setRadioGroupId (7001);
+    melodiesTab.onClick = [this] { showTab (2); };
+    melodiesTab.setTooltip ("Many different melodies over your own chord progression");
+    addAndMakeVisible (melodiesTab);
+    loadChordsButton.setTooltip ("A MIDI file with your chord progression (block chords or arpeggios), exported from your DAW. You can also drop it on the plugin.");
+    useCurrentButton.setTooltip ("Use the chords of what is playing now: a composed idea, a typed progression or a transcribed song");
+    useSongButton.setTooltip ("Use the chords heard in the song analysed in the LISTEN tab");
+    loadChordsButton.onClick = [this] {
+        chooser = std::make_unique<juce::FileChooser> ("Choose a chord progression MIDI file", juce::File(), "*.mid;*.midi");
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this] (const juce::FileChooser& fc) {
+            if (fc.getResult().existsAsFile()) proc.loadChordMidi (fc.getResult());
+        });
+    };
+    useCurrentButton.onClick = [this] { proc.useCurrentChords(); };
+    useSongButton.onClick = [this] { proc.useSongChords(); };
+    registerBox.addItem ("Register: low", 1);
+    registerBox.addItem ("Register: middle", 2);
+    registerBox.addItem ("Register: high", 3);
+    registerBox.setSelectedId (2, juce::dontSendNotification);
+    registerBox.onChange = [this] { proc.setLabRegister (registerBox.getSelectedId() - 2); };
+    setupLabel (labInfo, "", 12.0f, col::text);
+    labInfo.setJustificationType (juce::Justification::topLeft);
+    setupLabel (variationsLabel, "MELODY VARIATIONS", 10.5f);
+    setupLabel (labHint, "", 11.0f, col::accentB);
+    labHint.setJustificationType (juce::Justification::topLeft);
+    generateVariationsButton.getProperties().set ("accent", true);
+    generateVariationsButton.onClick = [this] { proc.generateVariations (false); };
+    moreLikeButton.setTooltip ("8 new takes in the character of the selected melody");
+    moreLikeButton.onClick = [this] { proc.generateVariations (true); };
+    shuffleButton.setTooltip ("8 fresh melodies, one of each character");
+    shuffleButton.onClick = [this] { proc.generateVariations (false); };
+    variationList.setRowHeight (37);
+    variationList.setColour (juce::ListBox::backgroundColourId, juce::Colours::transparentBlack);
+    variationList.setColour (juce::ListBox::outlineColourId, juce::Colours::transparentBlack);
+    variationModel.onPick = [this] (int row) { proc.applyVariation (row); };
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &loadChordsButton, &useCurrentButton, &useSongButton, &registerBox, &labInfo,
+                                                                          &variationsLabel, &labHint, &generateVariationsButton, &moreLikeButton,
+                                                                          &shuffleButton, &variationList })
         addChildComponent (c);
 
     // ---- parts ----
@@ -487,7 +562,7 @@ MelodyverseEditor::MelodyverseEditor (MelodyverseProcessor& p) : AudioProcessorE
 
     syncUiFromSettings();
     listenTab.setToggleState (true, juce::dontSendNotification);
-    showTab (proc.getVocalReport().has_value());
+    showTab (! proc.getLabChords().empty() ? 2 : proc.getVocalReport().has_value() ? 1 : 0);
     setResizable (true, true);
     setResizeLimits (1100, 660, 1900, 1250);
     setSize (1220, 720);
@@ -555,6 +630,50 @@ void MelodyverseEditor::refreshFromProcessor()
                              + juce::String ((int) (score.lengthBeats / 4)) + " bars",
                          juce::dontSendNotification);
     seedLabel.setText ("seed " + juce::String (proc.settings.seed), juce::dontSendNotification);
+
+    // melody lab
+    {
+        auto vars = proc.getVariations();
+        variationModel.variations = vars;
+        variationList.updateContent();
+        if (proc.getLabSelected() >= 0) variationList.selectRow (proc.getLabSelected(), true, true);
+        else variationList.deselectAllRows();
+        variationList.repaint();
+        registerBox.setSelectedId (proc.getLabRegister() + 2, juce::dontSendNotification);
+        auto chords = proc.getLabChords();
+        const bool haveChords = ! chords.empty();
+        generateVariationsButton.setEnabled (haveChords);
+        shuffleButton.setEnabled (haveChords);
+        moreLikeButton.setEnabled (haveChords && proc.getLabSelected() >= 0);
+        useSongButton.setEnabled (proc.getAnalysis().has_value());
+        if (haveChords)
+        {
+            auto key = proc.getLabKey();
+            juce::String names;
+            std::optional<mv::Chord> last;
+            int shown = 0;
+            double end = 0;
+            for (auto& c : chords)
+            {
+                end = std::max (end, c.start + c.duration);
+                if (! c.chord || (last && *last == *c.chord)) continue;
+                if (++shown > 10) { names << " ..."; break; }
+                names << (names.isEmpty() ? "" : "  ") << c.chord->name (key.prefersFlats());
+                last = c.chord;
+            }
+            labInfo.setText ("Chords from " + proc.getLabSource() + "  |  " + juce::String (key.name()) + "  |  " + juce::String ((int) std::ceil (end / 4.0 - 1e-6))
+                                 + " bars\n" + names,
+                             juce::dontSendNotification);
+            labHint.setText ("Click a melody to hear it over your chords. Drag it out with the Melody \"drag MIDI\" pill.", juce::dontSendNotification);
+        }
+        else
+        {
+            labInfo.setText ("Bring a chord progression: drop a MIDI file of your chords here (block chords or arpeggios), "
+                             "or use the chords already in the plugin.",
+                             juce::dontSendNotification);
+            labHint.setText ({}, juce::dontSendNotification);
+        }
+    }
 
     // vocals
     {
@@ -651,22 +770,26 @@ void MelodyverseEditor::timerCallback()
     if (proc.isBusy()) repaint (progressArea);
 }
 
-void MelodyverseEditor::showTab (bool vocals)
+void MelodyverseEditor::showTab (int which)
 {
-    vocalsTab = vocals;
-    (vocals ? vocalTabButton : listenTab).setToggleState (true, juce::dontSendNotification);
+    tab = juce::jlimit (0, 2, which);
+    (tab == 0 ? listenTab : tab == 1 ? vocalTabButton : melodiesTab).setToggleState (true, juce::dontSendNotification);
     for (juce::Component* c : std::initializer_list<juce::Component*> { &loadButton, &captureButton, &transcribeButton, &matchButton, &quantizeBox,
                                                                           &quantizeLabel, &analysisText, &tempoHint })
-        c->setVisible (! vocals);
+        c->setVisible (tab == 0);
     for (juce::Component* c : std::initializer_list<juce::Component*> { &loadVocalButton, &recordVocalButton, &vocalReportText, &progressionsLabel,
                                                                           &progressionList, &ideaBox, &newIdeaButton, &vocalHint })
-        c->setVisible (vocals);
+        c->setVisible (tab == 1);
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &loadChordsButton, &useCurrentButton, &useSongButton, &registerBox, &labInfo,
+                                                                          &variationsLabel, &labHint, &generateVariationsButton, &moreLikeButton,
+                                                                          &shuffleButton, &variationList })
+        c->setVisible (tab == 2);
 }
 
 bool MelodyverseEditor::isInterestedInFileDrag (const juce::StringArray& files)
 {
     for (auto& f : files)
-        for (auto* ext : { ".wav", ".aif", ".aiff", ".flac", ".ogg", ".mp3", ".m4a" })
+        for (auto* ext : { ".wav", ".aif", ".aiff", ".flac", ".ogg", ".mp3", ".m4a", ".mid", ".midi" })
             if (f.endsWithIgnoreCase (ext)) return true;
     return false;
 }
@@ -678,7 +801,12 @@ void MelodyverseEditor::filesDropped (const juce::StringArray& files, int, int)
     for (auto& f : files)
         if (isInterestedInFileDrag ({ f }))
         {
-            if (vocalsTab) proc.loadVocalFile (juce::File (f));
+            if (f.endsWithIgnoreCase (".mid") || f.endsWithIgnoreCase (".midi"))
+            {
+                showTab (2);  // a MIDI file is a chord progression for the melody lab
+                proc.loadChordMidi (juce::File (f));
+            }
+            else if (tab == 1) proc.loadVocalFile (juce::File (f));
             else proc.loadAudioFile (juce::File (f));
             break;
         }
@@ -735,7 +863,7 @@ void MelodyverseEditor::paintOverChildren (juce::Graphics& g)
     g.drawRect (getLocalBounds(), 3);
     g.setColour (juce::Colours::white);
     g.setFont (font (24.0f, true));
-    g.drawText (vocalsTab ? "Drop to study the vocal" : "Drop to listen", getLocalBounds(), juce::Justification::centred);
+    g.drawText (tab == 1 ? "Drop to study the vocal" : tab == 2 ? "Drop chords (MIDI) or a song" : "Drop to listen", getLocalBounds(), juce::Justification::centred);
 }
 
 void MelodyverseEditor::resized()
@@ -779,9 +907,34 @@ void MelodyverseEditor::resized()
     // listen / vocals
     {
         auto tabs = listenArea.reduced (14, 10).removeFromTop (26);
-        listenTab.setBounds (tabs.removeFromLeft (tabs.getWidth() / 2 - 3));
+        const int tw = (tabs.getWidth() - 12) / 3;
+        listenTab.setBounds (tabs.removeFromLeft (tw));
         tabs.removeFromLeft (6);
-        vocalTabButton.setBounds (tabs);
+        vocalTabButton.setBounds (tabs.removeFromLeft (tw));
+        tabs.removeFromLeft (6);
+        melodiesTab.setBounds (tabs);
+        {
+            auto m = listenArea.reduced (14).withTrimmedTop (32);
+            auto mrow = [&m] (int h) { auto x = m.removeFromTop (h); m.removeFromTop (6); return x; };
+            auto r1 = mrow (28);
+            loadChordsButton.setBounds (r1.removeFromLeft (r1.getWidth() / 2 - 3));
+            r1.removeFromLeft (6);
+            useCurrentButton.setBounds (r1);
+            auto r2 = mrow (26);
+            useSongButton.setBounds (r2.removeFromLeft (r2.getWidth() / 2 - 3));
+            r2.removeFromLeft (6);
+            registerBox.setBounds (r2);
+            labInfo.setBounds (mrow (44));
+            generateVariationsButton.setBounds (mrow (36));
+            auto bottomRow = m.removeFromBottom (30);
+            moreLikeButton.setBounds (bottomRow.removeFromLeft (bottomRow.getWidth() / 2 - 3));
+            bottomRow.removeFromLeft (6);
+            shuffleButton.setBounds (bottomRow);
+            m.removeFromBottom (4);
+            labHint.setBounds (m.removeFromBottom (28));
+            variationsLabel.setBounds (m.removeFromTop (16));
+            variationList.setBounds (m);
+        }
         auto v = listenArea.reduced (14).withTrimmedTop (32);
         auto vrow = [&v] (int h) { auto x = v.removeFromTop (h); v.removeFromTop (6); return x; };
         auto lr2 = vrow (30);

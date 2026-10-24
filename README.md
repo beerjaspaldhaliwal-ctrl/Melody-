@@ -111,6 +111,10 @@ On the synthetic test songs in `tests/` (known ground truth), it recovers tempo 
   - **Shape:** phrases, breaths and contour, the repeating **hook**, tempo, swing and dynamics.
   - **Chords:** it then ranks the **top 5 chord progressions** that fit the singing bar by bar. One is tailor-made; the rest come from Punjabi sad (Kafi), bhangra (Khamaj), Punjabi pop, Punjabi R&B, Sufi, lo-fi and cinematic loops.
   - **Arrangement:** click one to hear a full arrangement under the vocal guide, with **answer phrases** between your lines or a **harmony** a 3rd above or 6th below.
+- **Melodies tab (Melody Lab):** drop a **MIDI file of your chord progression** (block chords or arpeggios, inversions included), or use the chords already in the plugin. Melodyverse reads the chords and key, then writes **8 different melodies** over them, one per character: Catchy hook, Lyrical/singable, Syncopated pop, Arpeggio rise, Call & response, Punjabi folk (murki & meend), Soulful R&B and Cinematic.
+  - **How they're written:** each melody is built from motifs that are repeated, sequenced to follow the chords, inverted and varied. Phrases are shaped as question and answer with a planned climax. Strong beats land on guide tones with smooth voice leading, and weak beats use passing, neighbour and approach notes, with anticipations across the bar line.
+  - **Best of several:** several candidates are written per character and the strongest is kept, rated on chord tones on the beat, singability, leap recovery, motif coherence, range and the ending.
+  - **More like this** gives 8 new takes in the selected character, and **Register** moves the melodies low, middle or high.
 - **Get the notes out:** drag any part (or the full arrangement) from its **drag MIDI** pill straight into your timeline. You can also enable **MIDI out** (melody ch.1, chords ch.2, bass ch.3, drums ch.10) to drive your own instruments, or use **Save MIDI / Save WAV**.
 - Per-part on/off, volume and instrument (the vocal guide is its own part, MIDI ch.4) (piano, strings, brass, flute, bansuri, sitar, tumbi, harmonium, nylon guitar, oud, 808, supersaw…). Everything is saved with your project.
 

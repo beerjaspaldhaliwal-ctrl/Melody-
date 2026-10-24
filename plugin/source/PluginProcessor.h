@@ -2,6 +2,7 @@
 
 #include "Analysis.h"
 #include "Generator.h"
+#include "MelodyLab.h"
 #include "Synth.h"
 #include "Vocal.h"
 
@@ -76,6 +77,20 @@ public:
     std::optional<mv::VocalReport> getVocalReport() const;
     std::vector<mv::ProgressionOption> getVocalOptions() const;
     juce::String getVocalLabel() const;
+
+    // ---- melody lab: many melodies over one chord progression ----
+    bool loadChordMidi (const juce::File& file);   // read chords (and key) from a MIDI file
+    bool useCurrentChords();                       // the arrangement's chords (typed, generated or transcribed)
+    bool useSongChords();                          // chords heard in the analysed song
+    void generateVariations (bool moreLikeSelected);
+    void applyVariation (int index);
+    void setLabRegister (int shift);               // -1 low, 0 mid, +1 high
+    int getLabRegister() const { return labRegister; }
+    int getLabSelected() const { return labSelected; }
+    std::vector<mv::MelodyVariation> getVariations() const;
+    std::vector<mv::ChordEvent> getLabChords() const;
+    mv::Key getLabKey() const;
+    juce::String getLabSource() const;
     bool isCapturing() const { return capturing.load(); }
     double capturedSeconds() const;
     void setPartInstrument (int part, const juce::String& instrument);
@@ -104,7 +119,8 @@ public:
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
-    void commitScore (mv::Score score, const juce::String& source);
+    void commitScore (mv::Score score, const juce::String& source, bool styleInstruments = true);
+    void setLabChords (std::vector<mv::ChordEvent> timeline, mv::Key key, double bpm, const juce::String& label);
     void setStatus (const juce::String& s);
     void startAnalysis (std::vector<float> mono, double sampleRate, double fixedBpm, const juce::String& label);
     void startVocalAnalysis (std::vector<float> mono, double sampleRate, double fixedBpm, const juce::String& label);
@@ -138,6 +154,13 @@ private:
     std::vector<mv::ProgressionOption> vocalOptions;
     juce::String vocalLabel;
     int vocalOption = -1, vocalIdea = 0;
+    std::vector<mv::ChordEvent> labTimeline;
+    mv::Key labKey;
+    double labBpm = 0;
+    juce::String labSource;
+    std::vector<mv::MelodyVariation> labVariations;
+    int labSelected = -1, labFocus = -1, labRegister = 0;
+    juce::uint32 labSeed = 1;
     juce::String status { "Ready" }, source { "generated" }, analysisLabel;
     std::atomic<float> progress { 0 };
     std::atomic<bool> busy { false };

@@ -5,6 +5,7 @@
 #include "../core/Styles.h"
 #include "../core/Synth.h"
 #include "../core/Vocal.h"
+#include "../core/MelodyLab.h"
 
 #include <cmath>
 #include <cstdio>
@@ -324,6 +325,87 @@ int main()
             int iv = harm.track ("Melody")->notes[i].pitch - harm.track ("Vocal")->notes[i].pitch;
             CHECK (iv >= 3 && iv <= 5);
         }
+    });
+
+    test ("melody lab: chords from MIDI, key, 8 developed variations", [] {
+        // block chords as a DAW would export them, with inversions: Am  F/A  C/G  G  (2 bars each)
+        std::vector<Note> block;
+        auto addChord = [&] (double at, double len, std::vector<int> ps) { for (int p : ps) block.push_back ({ at, len, p, 90 }); };
+        for (int rep = 0; rep < 2; ++rep)
+        {
+            double o = rep * 16.0;
+            addChord (o + 0, 4, { 57, 60, 64 });      // Am
+            addChord (o + 4, 4, { 57, 60, 65 });      // F/A
+            addChord (o + 8, 4, { 55, 60, 64 });      // C/G
+            addChord (o + 12, 4, { 55, 59, 62 });     // G
+        }
+        auto tl = chordsFromNotes (block);
+        std::vector<std::string> names;
+        for (auto& c : tl) names.push_back (c.chord->name());
+        std::string joined;
+        for (auto& n : names) joined += n + " ";
+        std::printf ("    block chords -> %s\n", joined.c_str());
+        CHECK ((names == std::vector<std::string> { "Am", "F/A", "C/G", "G", "Am", "F/A", "C/G", "G" }));
+        // the same progression played as 8th-note arpeggios
+        std::vector<Note> arp;
+        const std::vector<std::vector<int>> shapes { { 45, 52, 57, 60, 64, 60, 57, 52 }, { 41, 48, 53, 57, 60, 57, 53, 48 },
+                                                     { 48, 55, 60, 64, 67, 64, 60, 55 }, { 43, 50, 55, 59, 62, 59, 55, 50 } };
+        for (int c = 0; c < 4; ++c)
+            for (int k = 0; k < 8; ++k) arp.push_back ({ c * 4.0 + k * 0.5, 0.5, shapes[(size_t) c][(size_t) k], 90 });
+        auto tl2 = chordsFromNotes (arp);
+        std::string j2;
+        for (auto& c : tl2) j2 += c.chord->name() + " ";
+        std::printf ("    arpeggios    -> %s\n", j2.c_str());
+        CHECK (tl2.size() == 4 && tl2[0].chord->name() == "Am" && tl2[1].chord->name() == "F" && tl2[2].chord->name() == "C" && tl2[3].chord->name() == "G");
+        auto key = keyFromChords (tl);
+        std::printf ("    key -> %s\n", key.name().c_str());
+        CHECK (key.name() == "A minor");
+
+        MelodyLabOptions o;
+        o.seed = 7;
+        auto vars = melodyVariations (tl, key, o);
+        CHECK (vars.size() == 8);
+        std::set<int> chars;
+        for (auto& v : vars)
+        {
+            chars.insert (v.character);
+            std::printf ("    %-30s score %3.0f  %s\n", v.name.c_str(), v.metrics.score, v.tags.c_str());
+            CHECK (! v.notes.empty());
+            CHECK (v.metrics.chordToneStrong >= 0.7);
+            CHECK (v.metrics.rangeSemitones <= 24);
+            for (auto& n : v.notes) { CHECK (n.start >= 0 && n.end() <= 32 + 1e-6); CHECK (n.pitch >= 45 && n.pitch <= 96); }
+            // phrases come home: Sa when the last chord holds it, otherwise a tone of that chord
+            CHECK (tl.back().chord->contains (v.notes.back().pitch));
+        }
+        CHECK (chars.size() == 8);
+        // variations must really differ from one another
+        auto sameShare = [] (const std::vector<Note>& a, const std::vector<Note>& b) {
+            int same = 0;
+            for (auto& x : a) for (auto& y : b) if (std::abs (x.start - y.start) < 1e-6 && x.pitch == y.pitch) { ++same; break; }
+            return (double) same / std::max<size_t> (1, a.size());
+        };
+        double worst = 0;
+        for (size_t i = 0; i < vars.size(); ++i)
+            for (size_t k = i + 1; k < vars.size(); ++k) worst = std::max (worst, sameShare (vars[i].notes, vars[k].notes));
+        std::printf ("    most similar pair shares %.0f%% of notes\n", worst * 100);
+        CHECK (worst < 0.5);
+        // "more like this": 8 takes of one character, all different, deterministic
+        MelodyLabOptions f = o;
+        f.focusCharacter = 5;
+        auto takes = melodyVariations (tl, key, f);
+        CHECK (takes.size() == 8);
+        for (auto& t : takes) CHECK (t.character == 5);
+        double worstTake = 0;
+        for (size_t i = 0; i < takes.size(); ++i)
+            for (size_t k = i + 1; k < takes.size(); ++k) worstTake = std::max (worstTake, sameShare (takes[i].notes, takes[k].notes));
+        std::printf ("    most similar Punjabi takes share %.0f%% of notes\n", worstTake * 100);
+        CHECK (worstTake < 0.7);
+        auto again = melodyVariations (tl, key, o);
+        CHECK (again[3].notes.size() == vars[3].notes.size() && again[3].notes.front().pitch == vars[3].notes.front().pitch);
+        // the Punjabi character actually ornaments
+        bool ornamented = false;
+        for (auto& t : takes) for (auto& n : t.notes) ornamented |= n.bendFrom != 0 || n.duration < 0.1;
+        CHECK (ornamented);
     });
 
     std::printf ("\n%d checks, %d failures\n", checks, failures);
