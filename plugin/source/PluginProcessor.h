@@ -55,6 +55,8 @@ public:
         juce::String progression;   // "" = style default
         int quantize = 16;          // 0 = off
         std::array<juce::String, mv::kNumParts> instruments;  // "" = style default
+        juce::String labText;       // chords typed in the MELODIES tab, e.g. "Am F C G"
+        double labBeatsPerChord = 4;
     };
     Settings settings;
 
@@ -79,6 +81,7 @@ public:
     juce::String getVocalLabel() const;
 
     // ---- melody lab: many melodies over one chord progression ----
+    bool useTypedChords (const juce::String& text, double beatsPerChord);  // "Am F C G" or "i bVI bIII bVII"
     bool loadChordMidi (const juce::File& file);   // read chords (and key) from a MIDI file
     bool useCurrentChords();                       // the arrangement's chords (typed, generated or transcribed)
     bool useSongChords();                          // chords heard in the analysed song

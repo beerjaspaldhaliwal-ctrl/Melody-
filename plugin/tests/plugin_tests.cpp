@@ -311,6 +311,23 @@ int main (int argc, char** argv)
         if (restored.size() == takes.size())
             for (size_t i = 0; i < takes.size(); ++i) CHECK (restored[i].notes.size() == takes[i].notes.size());
         CHECK (q.getLabChords().size() == chords.size());
+        // the simple path: type the chords
+        CHECK (p.useTypedChords ("Dm Bb F C", 4));
+        auto typed = p.getLabChords();
+        CHECK (typed.size() == 4 && typed[1].chord->name (true) == "Bb" && typed[3].start == 12.0);
+        CHECK (p.getLabKey().name() == "D minor");
+        CHECK (p.getVariations().size() == 8 && p.getLabSelected() == 0);
+        CHECK (p.getScore().lengthBeats == 16.0);  // a 4-bar melody loop
+        CHECK (p.useTypedChords ("C G Am", 4));     // 3 one-bar chords -> a 3-bar loop
+        CHECK (p.getLabChords().size() == 3);
+        CHECK (p.useTypedChords ("F#m D A E", 2));  // half-bar chords -> a 2-bar loop
+        CHECK (p.getLabChords().size() == 4 && p.getScore().lengthBeats == 8.0);
+        CHECK (p.useTypedChords ("C G/B Am7 Fmaj7", 4));
+        CHECK (p.getLabChords()[1].chord->bass == 11);
+        CHECK (! p.useTypedChords ("Hello world", 4));
+        CHECK (p.getStatus().startsWith ("Couldn't read"));
+        CHECK (! p.useTypedChords ("   ", 4));
+        p.settings.style = "punjabi_bhangra";
         p.generateVariations (false);  // back to one of each character for the screenshot
         CHECK (p.useCurrentChords());  // the arrangement's own chords work as a source too
         CHECK (p.getVariations().size() == 8);
@@ -330,7 +347,7 @@ int main (int argc, char** argv)
             me->showTab (1);
             for (int i = 0; i < 5; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil (40);
             snapshot (*ed, shots, "melodyverse_vocals");
-            p.loadChordMidi (tmp.getChildFile ("my_chords.mid"));
+            p.useTypedChords ("Am F C G", 4);
             me->showTab (2);
             for (int i = 0; i < 5; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil (40);
             snapshot (*ed, shots, "melodyverse_melodies");

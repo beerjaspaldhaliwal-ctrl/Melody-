@@ -113,10 +113,16 @@ private:
 
     // melody lab
     juce::TextButton melodiesTab { "MELODIES" };
-    juce::TextButton loadChordsButton { "Load chords (MIDI)..." }, useCurrentButton { "Use current chords" }, useSongButton { "Use song's chords" };
+    juce::TextButton loadChordsButton { "Load chords (MIDI)..." }, useCurrentButton { "Use current chords" };
     juce::ComboBox registerBox;
-    juce::Label labInfo, variationsLabel, labHint;
-    juce::TextButton generateVariationsButton { "GENERATE 8 VARIATIONS" }, moreLikeButton { "More like this" }, shuffleButton { "Shuffle all" };
+    juce::Label labInfo, variationsLabel;
+    juce::TextButton moreLikeButton { "More like this" }, shuffleButton { "Shuffle all" };
+    juce::Label chordsLabel;
+    juce::TextEditor chordsEditor;
+    juce::ComboBox chordLengthBox;
+    juce::TextButton makeLoopsButton { "MAKE MELODY LOOPS" };
+    std::unique_ptr<MidiDragHandle> dragLoop;
+    void makeLoops();
     VariationList variationModel;
     juce::ListBox variationList { "variations", &variationModel };
 

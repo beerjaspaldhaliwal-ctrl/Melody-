@@ -698,6 +698,38 @@ void MelodyverseProcessor::setLabChords (std::vector<mv::ChordEvent> timeline, m
     ++version;
 }
 
+bool MelodyverseProcessor::useTypedChords (const juce::String& textIn, double beatsPerChord)
+{
+    const auto text = textIn.trim();
+    settings.labText = text;
+    settings.labBeatsPerChord = beatsPerChord;
+    if (text.isEmpty()) { setStatus ("Type your chords first, e.g.  Am F C G"); return false; }
+    std::vector<mv::Chord> chords;
+    const bool romans = ! juce::CharacterFunctions::isLetter (text[0]) || ! juce::String ("ABCDEFG").containsChar (text[0]);
+    const mv::Style st = mv::getStyle (settings.style.toStdString());
+    const mv::Key romanKey = currentKey (st);
+    try { chords = mv::parseProgression (text.toStdString(), romanKey); }
+    catch (const std::exception&)
+    {
+        setStatus ("Couldn't read \"" + text + "\". Type chord names like  Am F C G  (or  Dm7 G7 Cmaj7,  F#m D A E)");
+        return false;
+    }
+    if (chords.empty()) { setStatus ("Type your chords first, e.g.  Am F C G"); return false; }
+    // lay the chords out, repeating until the loop is a whole number of bars
+    std::vector<mv::ChordEvent> tl;
+    double t = 0;
+    for (int rep = 0; rep < 4 && (rep == 0 || std::fmod (t, 4.0) > 1e-6); ++rep)
+        for (auto& c : chords)
+        {
+            tl.push_back ({ t, beatsPerChord, c });
+            t += beatsPerChord;
+        }
+    const mv::Key key = romans ? romanKey : mv::keyFromChords (tl);
+    setLabChords (tl, key, 0, "your chords");
+    generateVariations (false);
+    return true;
+}
+
 bool MelodyverseProcessor::loadChordMidi (const juce::File& file)
 {
     juce::FileInputStream in (file);
@@ -786,8 +818,8 @@ void MelodyverseProcessor::generateVariations (bool moreLikeSelected)
         labSelected = -1;
     }
     applyVariation (0);
-    setStatus (focus >= 0 ? "8 new takes of \"" + juce::String (mv::melodyCharacters()[(size_t) focus].name) + "\" - click one to hear it"
-                          : juce::String ("8 melody variations written over your chords - click one to hear it"));
+    setStatus (focus >= 0 ? "8 new \"" + juce::String (mv::melodyCharacters()[(size_t) focus].name) + "\" loops - click one to hear it"
+                          : juce::String ("8 melody loops written over your chords - click one to hear it, then drag it into your DAW"));
 }
 
 void MelodyverseProcessor::applyVariation (int index)
@@ -940,6 +972,8 @@ void MelodyverseProcessor::getStateInformation (juce::MemoryBlock& destData)
     st.setProperty ("seed", (juce::int64) settings.seed, nullptr);
     st.setProperty ("progression", settings.progression, nullptr);
     st.setProperty ("quantize", settings.quantize, nullptr);
+    st.setProperty ("labText", settings.labText, nullptr);
+    st.setProperty ("labBeatsPerChord", settings.labBeatsPerChord, nullptr);
     for (int p = 0; p < mv::kNumParts; ++p) st.setProperty ("inst" + juce::String (p), settings.instruments[(size_t) p], nullptr);
     root.appendChild (st, nullptr);
     {
@@ -983,6 +1017,8 @@ void MelodyverseProcessor::setStateInformation (const void* data, int sizeInByte
         settings.seed = (juce::uint32) (juce::int64) st.getProperty ("seed", 1);
         settings.progression = st.getProperty ("progression", "").toString();
         settings.quantize = st.getProperty ("quantize", 16);
+        settings.labText = st.getProperty ("labText", "").toString();
+        settings.labBeatsPerChord = st.getProperty ("labBeatsPerChord", 4.0);
         for (int i = 0; i < mv::kNumParts; ++i) settings.instruments[(size_t) i] = st.getProperty ("inst" + juce::String (i), "").toString();
     }
     auto an = root.getChildWithName ("Analysis");
